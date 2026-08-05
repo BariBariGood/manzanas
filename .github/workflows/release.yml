@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # simbridge links against the AXe FBSimulatorControl frameworks, so it
+  # needs a Mac with an AXe install (github.com/cameroncooke/AXe). It is
+  # attached to the release created by the goreleaser job.
+  simbridge:
+    needs: goreleaser
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xcodegen
+        run: brew install xcodegen
+      # Prebuilt AXe frameworks are tied to the exact Swift compiler that
+      # built them; rebuild them with the runner's toolchain (~15 min).
+      - name: Build AXe frameworks
+        run: ./helpers/simbridge/build-frameworks.sh "$RUNNER_TEMP/axe-frameworks"
+      - name: Build simbridge (darwin_arm64)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          AXE_FRAMEWORKS="$RUNNER_TEMP/axe-frameworks" ./helpers/simbridge/build.sh "simbridge_${VERSION}_darwin_arm64"
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET="simbridge_${VERSION}_darwin_arm64"
+          RELEASE_ID=$(curl -sf -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@${ASSET}" \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${ASSET}" \
+            > /dev/null
+          echo "uploaded ${ASSET} to release ${GITHUB_REF_NAME}"

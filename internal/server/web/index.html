@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>manzanasd — dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>manzanasd</h1>
+  <span class="meta" id="health">connecting…</span>
+  <span class="meta" id="pool-summary"></span>
+  <span class="meta right" id="live-indicator" title="update mode">polling</span>
+</header>
+
+<nav id="tabs">
+  <button class="tab active" data-tab="fleet">Fleet</button>
+  <button class="tab" data-tab="multiview">Multiview</button>
+  <button class="tab" data-tab="journal">Journal</button>
+</nav>
+
+<main id="tab-fleet" class="tab-pane">
+  <section>
+    <h2>Targets</h2>
+    <table id="targets">
+      <thead><tr>
+        <th>Name</th><th>Runtime</th><th>Device</th><th>State</th>
+        <th>Labels</th><th>UDID</th><th></th><th class="controls-col"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="empty" id="targets-empty" hidden>no targets</p>
+  </section>
+  <section>
+    <h2>Leases</h2>
+    <table id="leases">
+      <thead><tr>
+        <th>Agent</th><th>Target</th><th>State</th><th>Purpose</th>
+        <th>Expires</th><th>Queue</th><th class="controls-col"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="empty" id="leases-empty" hidden>no leases</p>
+  </section>
+</main>
+
+<main id="tab-multiview" class="tab-pane" hidden>
+  <section>
+    <div class="mv-head">
+      <h2>Multiview</h2>
+      <span class="meta">click a tile to start/stop its live stream</span>
+      <button id="mv-start-all">start all</button>
+      <button id="mv-stop-all">stop all</button>
+    </div>
+    <div id="mv-grid"></div>
+    <p class="empty" id="mv-empty" hidden>no booted targets to view</p>
+  </section>
+</main>
+
+<main id="tab-journal" class="tab-pane" hidden>
+  <section id="journal-runs-pane">
+    <h2>Runs</h2>
+    <table id="runs">
+      <thead><tr>
+        <th>Run</th><th>Agent</th><th>Target</th><th>Purpose</th>
+        <th>Entries</th><th>Updated</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="empty" id="runs-empty" hidden>no journal runs</p>
+  </section>
+  <section id="journal-run-pane" hidden>
+    <div class="run-head">
+      <button id="run-back">&larr; runs</button>
+      <h2 id="run-title"></h2>
+      <a id="run-export" href="#" target="_blank">export.md</a>
+    </div>
+    <div class="meta" id="run-meta"></div>
+    <div id="run-entries"></div>
+    <button id="run-more" hidden>load more</button>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

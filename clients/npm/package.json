@@ -1,0 +1,34 @@
+{
+  "name": "manzanasd-client",
+  "version": "0.2.0",
+  "description": "Thin npm wrapper for the manzanas CLI: downloads the right release binary on install and proxies to it.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BariBariGood/manzanas.git",
+    "directory": "clients/npm"
+  },
+  "bin": {
+    "manzanas": "bin/manzanas.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "install.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

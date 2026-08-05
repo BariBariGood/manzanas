@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for manzanasd. install.sh substitutes __HOME__ and
+  __PORT__ and writes the result to
+  ~/Library/LaunchAgents/com.baribarigood.manzanasd.plist.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.baribarigood.manzanasd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/bin/manzanasd</string>
+		<string>--addr</string>
+		<string>:__PORT__</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.manzanasd/logs/manzanasd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.manzanasd/logs/manzanasd.err.log</string>
+	<key>WorkingDirectory</key>
+	<string>__HOME__/.manzanasd</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:__HOME__/bin</string>
+	</dict>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>

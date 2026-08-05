@@ -1,0 +1,241 @@
+[
+  {
+    "role": "AXApplication",
+    "type": "Application",
+    "title": null,
+    "children": [
+      {
+        "role": "AXGroup",
+        "type": "Group",
+        "AXLabel": null,
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "width": 402,
+          "height": 874
+        },
+        "children": [
+          {
+            "title": null,
+            "role_description": "button",
+            "frame": {
+              "x": 16,
+              "height": 90.33333333333331,
+              "width": 370,
+              "y": 168
+            },
+            "AXValue": null,
+            "custom_actions": [],
+            "enabled": true,
+            "type": "Button",
+            "children": [
+              {
+                "children": [],
+                "content_required": false,
+                "help": null,
+                "pid": 49855,
+                "AXLabel": "apple.id",
+                "role_description": "image",
+                "AXUniqueId": "apple.id",
+                "subrole": null,
+                "type": "Image",
+                "enabled": true,
+                "role": "AXImage",
+                "frame": {
+                  "x": 32,
+                  "height": 60.333333333333314,
+                  "y": 183,
+                  "width": 60
+                },
+                "title": null,
+                "custom_actions": [],
+                "AXFrame": "{{32, 183}, {60, 60.333333333333314}}",
+                "AXValue": null,
+                "traits": []
+              },
+              {
+                "children": [],
+                "traits": [],
+                "help": null,
+                "role": "AXStaticText",
+                "frame": {
+                  "height": 24,
+                  "x": 100,
+                  "y": 183,
+                  "width": 134.66666666666666
+                },
+                "AXUniqueId": null,
+                "title": null,
+                "content_required": false,
+                "role_description": "text",
+                "AXValue": null,
+                "AXFrame": "{{100, 183}, {134.66666666666666, 24}}",
+                "custom_actions": [],
+                "type": "StaticText",
+                "pid": 49855,
+                "enabled": true,
+                "AXLabel": "Apple Account",
+                "subrole": null
+              },
+              {
+                "enabled": true,
+                "AXUniqueId": null,
+                "AXLabel": "Sign in to access your iCloud data, the App Store, Apple services, and more.",
+                "title": null,
+                "role": "AXStaticText",
+                "custom_actions": [],
+                "content_required": false,
+                "pid": 49855,
+                "help": null,
+                "subrole": null,
+                "type": "StaticText",
+                "children": [],
+                "traits": [],
+                "AXValue": null,
+                "role_description": "text",
+                "frame": {
+                  "x": 100,
+                  "height": 33.66666666666666,
+                  "width": 236,
+                  "y": 209.66666666666666
+                },
+                "AXFrame": "{{100, 209.66666666666666}, {236, 33.666666666666657}}"
+              },
+              {
+                "AXFrame": "{{360.66666666666669, 207}, {7, 12}}",
+                "custom_actions": [],
+                "subrole": null,
+                "type": "Image",
+                "pid": 49855,
+                "AXLabel": "",
+                "help": null,
+                "role": "AXImage",
+                "title": null,
+                "traits": [],
+                "role_description": "image",
+                "enabled": true,
+                "frame": {
+                  "height": 12,
+                  "x": 360.6666666666667,
+                  "y": 207,
+                  "width": 7
+                },
+                "AXValue": null,
+                "content_required": false,
+                "children": [],
+                "AXUniqueId": "chevron.forward"
+              }
+            ],
+            "AXFrame": "{{16, 168}, {370, 90.333333333333314}}",
+            "traits": [],
+            "AXLabel": "Apple Account, Sign in to access your iCloud data, the App Store, Apple services, and more.",
+            "subrole": null,
+            "help": null,
+            "role": "AXButton",
+            "pid": 49855,
+            "AXUniqueId": "com.apple.settings.primaryAppleAccount",
+            "content_required": false
+          },
+          {
+            "traits": [],
+            "custom_actions": [],
+            "pid": 49855,
+            "AXUniqueId": null,
+            "AXFrame": "{{32.999999999999943, 803}, {336, 38}}",
+            "AXLabel": null,
+            "AXValue": "Search",
+            "title": null,
+            "frame": {
+              "y": 803,
+              "width": 336,
+              "height": 38,
+              "x": 32.99999999999994
+            },
+            "help": null,
+            "role_description": "search text field",
+            "type": "TextField",
+            "subrole": "AXSearchField",
+            "content_required": false,
+            "children": [
+              {
+                "content_required": false,
+                "title": null,
+                "AXFrame": "{{335.66666666666669, 811}, {17.333333333333314, 22}}",
+                "frame": {
+                  "y": 811,
+                  "width": 17.333333333333314,
+                  "x": 335.6666666666667,
+                  "height": 22
+                },
+                "traits": [],
+                "pid": 49855,
+                "AXValue": null,
+                "AXUniqueId": "Dictate",
+                "children": [],
+                "AXLabel": "Dictate",
+                "role": "AXButton",
+                "enabled": true,
+                "help": "Double-tap to start dictation. Double-tap with two fingers when finished.",
+                "type": "Button",
+                "role_description": "button",
+                "custom_actions": [],
+                "subrole": null
+              },
+              {
+                "pid": 49855,
+                "title": null,
+                "children": [],
+                "AXLabel": "Search",
+                "subrole": null,
+                "content_required": false,
+                "help": null,
+                "enabled": true,
+                "AXValue": null,
+                "frame": {
+                  "y": 812.3333333333334,
+                  "width": 20.33333333333333,
+                  "height": 18.66666666666663,
+                  "x": 45.99999999999994
+                },
+                "role": "AXImage",
+                "AXUniqueId": "magnifyingglass",
+                "role_description": "image",
+                "custom_actions": [],
+                "type": "Image",
+                "AXFrame": "{{45.999999999999943, 812.33333333333337}, {20.333333333333329, 18.666666666666629}}",
+                "traits": []
+              },
+              {
+                "type": "Button",
+                "subrole": null,
+                "content_required": false,
+                "enabled": true,
+                "pid": 49855,
+                "AXValue": null,
+                "AXUniqueId": "Dictate",
+                "role_description": "button",
+                "title": null,
+                "custom_actions": [],
+                "help": "Double-tap to start dictation. Double-tap with two fingers when finished.",
+                "traits": [],
+                "AXFrame": "{{335.66666666666669, 811}, {17.333333333333314, 22}}",
+                "frame": {
+                  "y": 811,
+                  "width": 17.333333333333314,
+                  "height": 22,
+                  "x": 335.6666666666667
+                },
+                "children": [],
+                "AXLabel": "Dictate",
+                "role": "AXButton"
+              }
+            ],
+            "role": "AXTextField",
+            "enabled": true
+          },
+          null
+        ]
+      }
+    ]
+  }
+]

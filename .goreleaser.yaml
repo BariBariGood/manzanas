@@ -1,0 +1,69 @@
+# GoReleaser config for manzanasd releases.
+#
+# Local dry-run:  goreleaser release --snapshot --clean
+# Real releases happen from .github/workflows/release.yml on tag push (v*).
+version: 2
+
+project_name: manzanasd
+
+builds:
+  - id: manzanasd
+    main: ./cmd/manzanasd
+    binary: manzanasd
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: manzanas
+    main: ./cmd/manzanas
+    binary: manzanas
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: manzanas-broker
+    main: ./cmd/manzanas-broker
+    binary: manzanas-broker
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    ids: [manzanasd, manzanas, manzanas-broker]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - deploy/com.baribarigood.manzanasd.plist
+      - deploy/install.sh
+      - deploy/uninstall.sh
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+
+release:
+  github:
+    owner: BariBariGood
+    name: manzanas
+  draft: false
+  prerelease: auto

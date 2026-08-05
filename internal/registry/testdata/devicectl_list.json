@@ -1,0 +1,128 @@
+{
+  "info": {
+    "arguments": ["devicectl", "list", "devices", "--json-output", "/tmp/out.json"],
+    "commandType": "devicectl.list.devices",
+    "environment": {},
+    "jsonVersion": 2,
+    "outcome": "success",
+    "version": "518.31"
+  },
+  "result": {
+    "devices": [
+      {
+        "capabilities": [],
+        "connectionProperties": {
+          "authenticationType": "manualPairing",
+          "isMobileDeviceOnly": false,
+          "lastConnectionDate": "2026-06-30T18:22:40.551Z",
+          "pairingState": "paired",
+          "potentialHostnames": [
+            "00001111-000000000000000A.coredevice.local",
+            "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE.coredevice.local"
+          ],
+          "transportType": "localNetwork",
+          "tunnelState": "disconnected",
+          "tunnelTransportProtocol": "tcp"
+        },
+        "deviceProperties": {
+          "bootedFromSnapshot": true,
+          "communicationsSecurityFeaturesEnabled": false,
+          "ddiServicesAvailable": false,
+          "developerModeStatus": "enabled",
+          "hasInternalOSBuild": false,
+          "name": "test-iphone",
+          "osBuildUpdate": "23F79",
+          "osVersionNumber": "26.5.2"
+        },
+        "hardwareProperties": {
+          "cpuType": {
+            "name": "arm64e",
+            "subType": 2,
+            "type": 16777228
+          },
+          "deviceType": "iPhone",
+          "ecid": 1234567890,
+          "hardwareModel": "D83AP",
+          "internalStorageCapacity": 256000000000,
+          "isProductionFused": true,
+          "marketingName": "iPhone 15 Pro",
+          "platform": "iOS",
+          "productType": "iPhone16,1",
+          "reality": "physical",
+          "serialNumber": "TESTSERIAL01",
+          "supportedDeviceFamilies": [1],
+          "thinningProductType": "iPhone16,1",
+          "udid": "00008130-000000000000001A"
+        },
+        "identifier": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        "tags": [],
+        "visibilityClass": "default"
+      },
+      {
+        "capabilities": [],
+        "connectionProperties": {
+          "authenticationType": "manualPairing",
+          "isMobileDeviceOnly": false,
+          "pairingState": "paired",
+          "transportType": "wired",
+          "tunnelState": "connected",
+          "tunnelTransportProtocol": "tcp"
+        },
+        "deviceProperties": {
+          "ddiServicesAvailable": true,
+          "developerModeStatus": "enabled",
+          "hasInternalOSBuild": false,
+          "name": "test-ipad",
+          "osBuildUpdate": "23F80",
+          "osVersionNumber": "26.5",
+          "screenViewingURL": "devices://device/open?id=11111111-2222-3333-4444-555555555555"
+        },
+        "hardwareProperties": {
+          "cpuType": {
+            "name": "arm64e",
+            "subType": 2,
+            "type": 16777228
+          },
+          "deviceType": "iPad",
+          "ecid": 987654321,
+          "hardwareModel": "J717AP",
+          "isProductionFused": true,
+          "marketingName": "iPad Pro (11-inch) (4th generation)",
+          "platform": "iOS",
+          "productType": "iPad14,3",
+          "reality": "physical",
+          "serialNumber": "TESTSERIAL02",
+          "supportedDeviceFamilies": [1, 2],
+          "thinningProductType": "iPad14,3-A",
+          "udid": "00008027-000000000000002B"
+        },
+        "identifier": "11111111-2222-3333-4444-555555555555",
+        "tags": [],
+        "visibilityClass": "default"
+      },
+      {
+        "capabilities": [],
+        "connectionProperties": {
+          "pairingState": "paired",
+          "transportType": "localNetwork",
+          "tunnelState": "disconnected"
+        },
+        "deviceProperties": {
+          "name": "hidden-watch",
+          "osVersionNumber": "13.5"
+        },
+        "hardwareProperties": {
+          "deviceType": "Apple Watch",
+          "marketingName": "Apple Watch SE 3",
+          "platform": "watchOS",
+          "productType": "Watch7,9",
+          "reality": "physical",
+          "udid": "00008310-000000000000003C"
+        },
+        "identifier": "66666666-7777-8888-9999-000000000000",
+        "tags": [],
+        "visibilityClass": "hidden"
+      }
+    ]
+  }
+}

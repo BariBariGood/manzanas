@@ -1,0 +1,132 @@
+name: "manzanasd simulator lease"
+description: >
+  Lease an iOS simulator from a manzanasd daemon, run a script with the
+  lease in the environment, capture a screenshot artifact, and release the
+  lease. Optionally post the screenshot as a PR comment.
+author: BariBariGood
+
+branding:
+  icon: smartphone
+  color: green
+
+inputs:
+  daemon-addr:
+    description: "manzanasd daemon address, e.g. http://100.64.0.1:7433"
+    required: true
+  labels:
+    description: "comma-separated target labels to lease by, e.g. ios26"
+    required: false
+    default: ""
+  run:
+    description: "shell script to run while holding the lease"
+    required: true
+  ttl-seconds:
+    description: "lease TTL in seconds"
+    required: false
+    default: "600"
+  agent-id:
+    description: "agent id reported to the daemon"
+    required: false
+    default: "github-actions"
+  manzanas-version:
+    description: >
+      manzanas CLI release tag to download (pinning strategy: pin an exact
+      tag like v0.2.0 in your workflow; "latest" resolves the newest release
+      at run time and is only for experimentation).
+    required: false
+    default: "latest"
+  screenshot:
+    description: "capture a screenshot of the leased target after the script"
+    required: false
+    default: "true"
+  comment-pr:
+    description: "post the screenshot as a PR comment (needs pull-requests: write)"
+    required: false
+    default: "false"
+  github-token:
+    description: "token used to download releases and post PR comments"
+    required: false
+    default: ${{ github.token }}
+  artifact-name:
+    description: >
+      screenshot artifact name; must be unique per workflow run, so
+      the default incorporates the job id (override for matrix jobs)
+    required: false
+    default: "manzanasd-screenshot-${{ github.job }}"
+
+outputs:
+  lease-id:
+    description: "the lease id that was held during the run"
+    value: ${{ steps.lease.outputs.lease_id }}
+  target-udid:
+    description: "the UDID of the leased target"
+    value: ${{ steps.lease.outputs.target_udid }}
+  screenshot-path:
+    description: "path of the captured screenshot (empty if disabled/failed)"
+    value: ${{ steps.shot.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install manzanas CLI
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MANZANAS_VERSION: ${{ inputs.manzanas-version }}
+      run: ${{ github.action_path }}/scripts/install-manzanas.sh
+
+    - name: Acquire lease
+      id: lease
+      shell: bash
+      env:
+        MANZANASD_ADDR: ${{ inputs.daemon-addr }}
+        LEASE_LABELS: ${{ inputs.labels }}
+        LEASE_TTL: ${{ inputs.ttl-seconds }}
+        AGENT_ID: ${{ inputs.agent-id }}
+      run: ${{ github.action_path }}/scripts/lease.sh
+
+    - name: Run user script
+      shell: bash
+      env:
+        MANZANASD_ADDR: ${{ inputs.daemon-addr }}
+        MANZANAS_LEASE: ${{ steps.lease.outputs.lease_id }}
+        MANZANAS_TARGET_UDID: ${{ steps.lease.outputs.target_udid }}
+      run: ${{ inputs.run }}
+
+    - name: Capture screenshot
+      id: shot
+      if: ${{ always() && inputs.screenshot == 'true' }}
+      shell: bash
+      env:
+        MANZANASD_ADDR: ${{ inputs.daemon-addr }}
+        MANZANAS_LEASE: ${{ steps.lease.outputs.lease_id }}
+        MANZANAS_TARGET_UDID: ${{ steps.lease.outputs.target_udid }}
+      run: ${{ github.action_path }}/scripts/screenshot.sh
+
+    - name: Upload screenshot artifact
+      if: ${{ always() && steps.shot.outputs.path != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.shot.outputs.path }}
+        if-no-files-found: ignore
+
+    - name: Comment on PR
+      if: ${{ always() && inputs.comment-pr == 'true' && github.event_name == 'pull_request' && steps.shot.outputs.path != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        SCREENSHOT_PATH: ${{ steps.shot.outputs.path }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        TARGET_UDID: ${{ steps.lease.outputs.target_udid }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+      run: ${{ github.action_path }}/scripts/comment-pr.sh
+
+    - name: Release lease
+      if: ${{ always() && steps.lease.outputs.lease_id != '' }}
+      shell: bash
+      env:
+        MANZANASD_ADDR: ${{ inputs.daemon-addr }}
+        MANZANAS_LEASE: ${{ steps.lease.outputs.lease_id }}
+        MANZANAS_RENEW_PID: ${{ steps.lease.outputs.renew_pid }}
+      run: ${{ github.action_path }}/scripts/release.sh

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>manzanasd — live view</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #101418; color: #e8eaed;
+         font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 12px 16px; border-bottom: 1px solid #2a2f36;
+           display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  header .meta { color: #9aa0a6; font-size: 12px; }
+  header .meta b { color: #e8eaed; font-weight: 500; }
+  #status { padding: 4px 16px; font-size: 12px; color: #9aa0a6; }
+  #status.err { color: #f28b82; }
+  main { display: flex; justify-content: center; padding: 16px; }
+  #screen { max-width: 100%; max-height: calc(100vh - 120px);
+            border: 1px solid #2a2f36; border-radius: 8px; background: #000; }
+</style>
+</head>
+<body>
+<header>
+  <h1>manzanasd</h1>
+  <span class="meta" id="target-meta">loading target…</span>
+  <span class="meta" id="lease-meta"></span>
+</header>
+<div id="status">negotiating stream…</div>
+<main><img id="screen" alt="live simulator stream"></main>
+<script>
+(async () => {
+  const udid = decodeURIComponent(location.pathname.split("/").pop());
+  const status = document.getElementById("status");
+  const fail = (msg) => { status.textContent = msg; status.classList.add("err"); };
+
+  try {
+    const tr = await fetch("/v0/targets");
+    const { targets } = await tr.json();
+    const t = (targets || []).find((x) => x.udid === udid);
+    const meta = document.getElementById("target-meta");
+    meta.textContent = "";
+    const add = (tag, text) => {
+      const el = document.createElement(tag === "text" ? "span" : tag);
+      el.textContent = text;
+      meta.appendChild(el);
+    };
+    if (t) {
+      add("b", t.name);
+      add("text", ` · ${t.runtime} · ${t.state} · `);
+      add("code", t.udid);
+    } else {
+      add("text", "unknown target ");
+      add("code", udid);
+    }
+  } catch { /* metadata is best-effort */ }
+
+  try {
+    const sr = await fetch("/v0/streams", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ udid, format: "mjpeg" }),
+    });
+    const offer = await sr.json();
+    if (!sr.ok) return fail(`stream error: ${offer.message || sr.status}`);
+    document.getElementById("lease-meta").textContent = offer.holder
+      ? `lease: ${offer.holder.agent_id} (${offer.holder.state})`
+      : "lease: none (target is free)";
+    status.textContent = `stream ${offer.stream_id} · mjpeg`;
+    document.getElementById("screen").src = offer.mjpeg_url;
+  } catch (e) {
+    fail(`stream error: ${e}`);
+  }
+})();
+</script>
+</body>
+</html>

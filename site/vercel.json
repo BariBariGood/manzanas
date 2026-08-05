@@ -1,0 +1,11 @@
+{
+  "redirects": [
+    { "source": "/blog/boot-storms-not-steady-state", "destination": "/blog/field-notes-aug-2", "permanent": true },
+    { "source": "/blog/designing-for-a-40ms-link", "destination": "/blog/field-notes-aug-2", "permanent": true },
+    { "source": "/blog/the-workstation-that-never-throttles", "destination": "/blog/field-notes-aug-2", "permanent": true },
+    { "source": "/blog/the-golden-image-that-lost-its-slimming", "destination": "/blog/field-notes-aug-2", "permanent": true },
+    { "source": "/blog/pause-dont-reboot", "destination": "/blog/field-notes-aug-2", "permanent": true },
+    { "source": "/blog/the-push-daemon-that-ate-our-fleet", "destination": "/blog/field-notes-aug-2", "permanent": true },
+    { "source": "/blog/warm-sims-and-golden-images", "destination": "/blog/field-notes-aug-2", "permanent": true }
+  ]
+}

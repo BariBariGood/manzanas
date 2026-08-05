@@ -1,0 +1,49 @@
+# Fixture verification: pin the status bar to the canonical 9:41 / 100%
+# state, capture screenshot evidence, then clear the override. The observe
+# tree only covers the frontmost app (not the system status bar), so the
+# pinned time is verified via screenshot artifacts rather than an element
+# assertion.
+name: statusbar-fixture
+description: >
+  Apply the statusbar fixture (time 9:41, full battery), capture a
+  screenshot showing the pinned status bar, clear the override, and capture
+  a second screenshot for comparison.
+lease:
+  labels: [simulator]
+  reset: erase
+  ttl_seconds: 600
+default_timeout: 300s
+steps:
+  - name: boot
+    op: boot
+    timeout: 600s
+  - name: pin-statusbar
+    op: fixture
+    fixture: statusbar
+    fixture_payload: {time: "9:41", batteryLevel: 100}
+  - name: launch-settings
+    op: action
+    kind: launch_app
+    payload: {bundle_id: com.apple.Preferences, terminate_running: true}
+  - name: settle
+    op: wait
+    duration: 5s
+  - name: assert-settings-rendered
+    op: assert
+    assert:
+      element_exists: {label: General}
+  - name: screenshot-pinned
+    op: assert
+    assert:
+      screenshot: {save: statusbar-pinned}
+  - name: clear-statusbar
+    op: fixture
+    fixture: statusbar
+    fixture_payload: {clear: true}
+  - name: settle-after-clear
+    op: wait
+    duration: 3s
+  - name: screenshot-cleared
+    op: assert
+    assert:
+      screenshot: {save: statusbar-cleared}

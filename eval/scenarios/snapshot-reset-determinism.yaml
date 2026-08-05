@@ -1,0 +1,98 @@
+# Snapshot-reset determinism: capture a pristine snapshot, dirty the sim,
+# restore, and assert the observed UI tree hash is byte-identical to the
+# pristine one. Saved hashes are also compared ACROSS runs by the report's
+# hash-consistency check.
+name: snapshot-reset-determinism
+description: >
+  Record the Settings root tree hash on a pristine boot, mutate UI state,
+  restore the pre-captured snapshot, and assert the tree hash matches the
+  pristine recording exactly. The statusbar fixture pins time/battery so the
+  hash is stable.
+lease:
+  labels: [simulator]
+  reset: erase
+  ttl_seconds: 900
+default_timeout: 300s
+steps:
+  - name: boot
+    op: boot
+    timeout: 600s
+  - name: pin-statusbar
+    op: fixture
+    fixture: statusbar
+    fixture_payload: {time: "9:41", batteryLevel: 100}
+  - name: launch-settings
+    op: action
+    kind: launch_app
+    payload: {bundle_id: com.apple.Preferences, terminate_running: true}
+  - name: settle
+    op: wait
+    duration: 5s
+  # On an erase-fresh boot, Settings keeps mutating for a while (first-run
+  # rows populate asynchronously); recording the baseline hash too early
+  # makes it unreproducible. Wait until the tree holds still first.
+  - name: settle-tree-stable
+    op: action
+    kind: wait_tree_stable
+    payload: {timeout_ms: 120000, interval_ms: 1000, stable_samples: 5, require_stable: true}
+    timeout: 150s
+  - name: record-pristine-hash
+    op: assert
+    assert:
+      tree_hash: {save_as: pristine}
+  - name: shutdown-for-snapshot
+    op: shutdown
+    timeout: 180s
+  - name: snapshot-pristine
+    op: snapshot
+    snapshot_label: eval-pristine
+    timeout: 600s
+  - name: boot-again
+    op: boot
+    timeout: 600s
+  - name: pin-statusbar-again
+    op: fixture
+    fixture: statusbar
+    fixture_payload: {time: "9:41", batteryLevel: 100}
+  - name: dirty-the-sim
+    op: action
+    kind: launch_app
+    payload: {bundle_id: com.apple.Preferences, terminate_running: true}
+  - name: settle-after-dirty
+    op: wait
+    duration: 10s
+  - name: scroll-away
+    op: action
+    kind: swipe
+    payload: {start_x: 200, start_y: 600, end_x: 200, end_y: 200, duration_seconds: 0.5}
+  - name: restore-pristine
+    op: restore
+    snapshot: eval-pristine
+    reboot: true
+    timeout: 600s
+  - name: pin-statusbar-after-restore
+    op: fixture
+    fixture: statusbar
+    fixture_payload: {time: "9:41", batteryLevel: 100}
+  - name: relaunch-settings
+    op: action
+    kind: launch_app
+    payload: {bundle_id: com.apple.Preferences, terminate_running: true}
+  - name: settle-after-restore
+    op: wait
+    duration: 5s
+  # Same stability gate as before the baseline capture, so both hashes are
+  # taken in the same settled UI state.
+  - name: settle-tree-stable-after-restore
+    op: action
+    kind: wait_tree_stable
+    payload: {timeout_ms: 120000, interval_ms: 1000, stable_samples: 5, require_stable: true}
+    timeout: 150s
+  - name: assert-hash-restored
+    op: assert
+    assert:
+      tree_hash: {equals_saved: pristine}
+  - name: screenshot-restored
+    op: assert
+    assert:
+      screenshot: {save: restored}

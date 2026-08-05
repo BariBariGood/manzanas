@@ -1,0 +1,46 @@
+# Stock-app navigation: launch Settings, verify the root list, scroll, and
+# verify content further down the page. Exercises lease/boot/launch/observe/
+# swipe/screenshot against an unmodified simulator.
+name: settings-navigation
+description: >
+  Launch the stock Settings app, assert the root list renders, scroll down,
+  and assert a below-the-fold row is present.
+lease:
+  labels: [simulator]
+  reset: erase
+  ttl_seconds: 600
+default_timeout: 300s
+steps:
+  - name: boot
+    op: boot
+    timeout: 600s
+  - name: launch-settings
+    op: action
+    kind: launch_app
+    payload: {bundle_id: com.apple.Preferences, terminate_running: true}
+  - name: settle
+    op: wait
+    duration: 5s
+  - name: assert-general-row
+    op: assert
+    assert:
+      element_exists: {label: General}
+  - name: screenshot-root
+    op: assert
+    assert:
+      screenshot: {save: settings-root}
+  - name: scroll-down
+    op: action
+    kind: swipe
+    payload: {start_x: 200, start_y: 600, end_x: 200, end_y: 200, duration_seconds: 0.5}
+  - name: settle-after-scroll
+    op: wait
+    duration: 2s
+  - name: assert-scrolled-content
+    op: assert
+    assert:
+      element_exists: {label: Privacy & Security}
+  - name: screenshot-scrolled
+    op: assert
+    assert:
+      screenshot: {save: settings-scrolled}
