@@ -634,6 +634,124 @@ func TestSafeShutdownDownClearedByRePark(t *testing.T) {
 	}
 }
 
+// GateBootCheap refuses on a fresh cached running count at the cap but
+// never lists targets, and stops trusting the cache once stale.
+func TestGateBootCheapUsesCachedRunningCount(t *testing.T) {
+	h := newFakeHost()
+	reg := registry.NewMock()
+	pool := testPool(t, h, reg, CapacityClass{MaxBootedRunning: 2, MaxConcurrentBoots: 1, MaxParked: 1})
+	pool.cfg.MinFreeDisk = 0
+	pool.cfg.LoadFactor = 0
+
+	pool.mu.Lock()
+	pool.running, pool.runningAt = 2, time.Now()
+	pool.mu.Unlock()
+	if err := pool.GateBootCheap(udidA); !errors.Is(err, ErrTooManyRunning) {
+		t.Fatalf("fresh cache at cap: err = %v, want ErrTooManyRunning", err)
+	}
+
+	pool.mu.Lock()
+	pool.runningAt = time.Now().Add(-runningCacheTTL - time.Second)
+	pool.mu.Unlock()
+	if err := pool.GateBootCheap(udidA); err != nil {
+		t.Fatalf("stale cache must fail open to the full gate: %v", err)
+	}
+}
+
+// listCountingRegistry counts List calls, for asserting that the cheap
+// gate never triggers a target listing.
+type listCountingRegistry struct {
+	*registry.MockRegistry
+	mu    sync.Mutex
+	lists int
+}
+
+func (r *listCountingRegistry) List(ctx context.Context) ([]proto.Target, error) {
+	r.mu.Lock()
+	r.lists++
+	r.mu.Unlock()
+	return r.MockRegistry.List(ctx)
+}
+
+func (r *listCountingRegistry) listCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lists
+}
+
+// A cap-refused GateBoot (the boot path, which excludes the boot target
+// from its count) must refresh the running-count cache so GateBootCheap
+// keeps refusing without listing targets: otherwise the cache (written
+// only via /v0/status probes) goes stale after one TTL and every wait
+// poll falls back to the full listing gate.
+func TestGateBootRefusalRefreshesCheapGateCache(t *testing.T) {
+	h := newFakeHost()
+	reg := &listCountingRegistry{MockRegistry: registry.NewMock()}
+	targets, _ := reg.List(context.Background())
+	booted := targets[0].UDID
+	pool := testPool(t, h, reg, CapacityClass{MaxBootedRunning: 1, MaxConcurrentBoots: 1, MaxParked: 1})
+	pool.cfg.MinFreeDisk = 0
+	pool.cfg.LoadFactor = 0
+	if err := reg.Boot(context.Background(), booted); err != nil {
+		t.Fatal(err)
+	}
+	waitBootedMock(t, reg.MockRegistry, booted)
+
+	if err := pool.GateBoot(context.Background(), udidA); !errors.Is(err, ErrTooManyRunning) {
+		t.Fatalf("full gate at cap: err = %v, want ErrTooManyRunning", err)
+	}
+	before := reg.listCount()
+	for i := 0; i < 5; i++ {
+		if err := pool.GateBootCheap(udidA); !errors.Is(err, ErrTooManyRunning) {
+			t.Fatalf("cheap gate after full refusal: err = %v, want ErrTooManyRunning", err)
+		}
+	}
+	if n := reg.listCount(); n != before {
+		t.Fatalf("cheap gate listed targets: %d lists, want %d", n, before)
+	}
+}
+
+// A pool boot path (rePark via OnReleased) must report the boot so the
+// server can drop the stale shutdown-ledger entry the boot undid —
+// these boots never pass through the server's own boot handler.
+func TestRePark_ReportsBoot(t *testing.T) {
+	h := newFakeHost()
+	reg := registry.NewMock()
+	targets, _ := reg.List(context.Background())
+	udid := targets[0].UDID
+	pool := testPool(t, h, reg, AppleSiliconClass)
+	var mu sync.Mutex
+	var booted []string
+	pool.SetBootReporter(func(u string) {
+		mu.Lock()
+		booted = append(booted, u)
+		mu.Unlock()
+	})
+	if err := reg.Boot(context.Background(), udid); err != nil {
+		t.Fatal(err)
+	}
+	waitBootedMock(t, reg, udid)
+	h.setSimTree(udid, 870, 871)
+	pool.mu.Lock()
+	pool.members[udid] = true
+	pool.mu.Unlock()
+
+	if err := pool.SafeShutdown(context.Background(), udid); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.OnReleased(context.Background(), udid); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, u := range booted {
+		if u == udid {
+			return
+		}
+	}
+	t.Fatalf("boot reporter never saw %s (got %v)", udid, booted)
+}
+
 // bootFailReg fails Boot while fail is set, for exercising the
 // background-boot failure path.
 type bootFailReg struct {

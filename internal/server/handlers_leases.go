@@ -31,8 +31,9 @@ func (s *Server) handleAcquireLease(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	req.NormalizeAgentID()
 	if req.AgentID == "" {
-		writeError(w, http.StatusBadRequest, proto.ErrBadRequest, "agent_id is required")
+		writeError(w, http.StatusBadRequest, proto.ErrBadRequest, "agent_id is required (session_id is accepted as an alias)")
 		return
 	}
 	if !state.ValidResetSpec(req.Reset) {

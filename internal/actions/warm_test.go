@@ -150,6 +150,28 @@ func TestWarmObserveCompactsHelperTree(t *testing.T) {
 	}
 }
 
+func TestWarmObserveRefreshRunsCold(t *testing.T) {
+	// refresh:true bypasses the resident helper (whose long-lived AX
+	// connection can serve a stale snapshot) and observes cold instead.
+	ff := &fakeFactory{configure: func(h *fakeHelper) {
+		h.results["describe_ui"] = map[string]any{"raw": `[{"AXLabel":"Stale","type":"Button"}]`}
+	}}
+	cold := &coldFake{}
+	b := warmFor(t, ff, cold)
+
+	res, err := b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "observe", Payload: map[string]any{"refresh": true}})
+	if err != nil {
+		t.Fatalf("observe with refresh: %v", err)
+	}
+	if res.Result["cold"] != true {
+		t.Fatalf("refresh observe must run cold, got %+v", res)
+	}
+	if len(cold.kinds) != 1 || cold.kinds[0] != "observe" {
+		t.Fatalf("cold dispatches: %v", cold.kinds)
+	}
+}
+
 func TestWarmObserveFallsBackColdOnTransportFailure(t *testing.T) {
 	ff := &fakeFactory{configure: func(h *fakeHelper) { h.transportFails = 99 }}
 	cold := &coldFake{}

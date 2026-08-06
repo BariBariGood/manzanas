@@ -27,6 +27,11 @@ const (
 	// its owner polling Get before it expires, so abandoned requests don't
 	// block the queue or claim freed targets. Each Get refreshes it.
 	QueueWaitTTL = 30 * time.Minute
+	// DefaultRenewGrace is the default renewal grace window: an active
+	// lease that passes its nominal expires_at stays active (and
+	// renewable) for this long before it actually expires and its
+	// reset/reclaim runs. See PROTOCOL.md §3.
+	DefaultRenewGrace = 2 * time.Minute
 )
 
 var (
@@ -91,6 +96,22 @@ type Manager struct {
 	// resetInFlight marks targets whose reset goroutine is still running,
 	// distinguishing them from targets quarantined by a failed reset.
 	resetInFlight map[string]bool
+	// dirty marks targets that have carried a lease since their last
+	// successful reset: a reset:"erase" grant on a dirty target is
+	// deferred until a pre-grant erase completes, so the holder always
+	// receives a clean device. Cleared when a reset succeeds.
+	dirty map[string]bool
+	// takeoverHold marks Reserve holds that displaced a quarantine
+	// (takeover=true): only those holds oblige the caller to erase the
+	// target before Unreserve, so only they may clear the dirty mark.
+	takeoverHold map[string]bool
+	// preGrant maps a queued lease ID to the target currently being
+	// erased for it, so one queued reset:"erase" lease never fans out
+	// erases across every free dirty target it matches.
+	preGrant map[string]string
+	// grace is the renewal grace window applied after an active lease's
+	// nominal expiry (0 disables it: leases expire exactly at expires_at).
+	grace time.Duration
 
 	stop chan struct{}
 	once sync.Once
@@ -117,6 +138,10 @@ func newManager(reg registry.Registry, onEvent GrantFunc) *Manager {
 		terminalAt:    make(map[string]time.Time),
 		queueDeadline: make(map[string]time.Time),
 		resetInFlight: make(map[string]bool),
+		dirty:         make(map[string]bool),
+		takeoverHold:  make(map[string]bool),
+		preGrant:      make(map[string]string),
+		grace:         DefaultRenewGrace,
 		stop:          make(chan struct{}),
 	}
 }
@@ -129,6 +154,18 @@ func (m *Manager) SetOnActive(fn GrantFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onActive = fn
+}
+
+// SetRenewGrace configures the renewal grace window applied after an
+// active lease's nominal expiry (0 or negative disables it). Must be set
+// before the manager serves traffic.
+func (m *Manager) SetRenewGrace(d time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d < 0 {
+		d = 0
+	}
+	m.grace = d
 }
 
 // SetResetFunc wires the post-lease auto-reset hook (owned by the state
@@ -173,6 +210,12 @@ func (m *Manager) startResets(resets []proto.Lease) {
 			err := m.resetFn(l)
 			m.mu.Lock()
 			delete(m.resetInFlight, l.TargetUDID)
+			delete(m.preGrant, l.ID)
+			if err == nil {
+				// A completed reset leaves the target clean: the next
+				// reset:"erase" grant needs no pre-grant erase.
+				delete(m.dirty, l.TargetUDID)
+			}
 			m.mu.Unlock()
 			if err != nil {
 				return
@@ -209,8 +252,10 @@ func (m *Manager) FinishReset(udid string) bool {
 	}
 	delete(m.byTarget, udid)
 	granted := m.promoteLocked(udid)
+	resets := m.takeResetsLocked()
 	m.mu.Unlock()
 	m.emit(granted)
+	m.startResets(resets)
 	return true
 }
 
@@ -232,6 +277,7 @@ func (m *Manager) Reserve(udid string) (takeover, ok bool) {
 		takeover = true
 	}
 	m.byTarget[udid] = reserveSentinel
+	m.takeoverHold[udid] = takeover
 	return takeover, true
 }
 
@@ -244,6 +290,7 @@ func (m *Manager) Quarantine(udid string) {
 	defer m.mu.Unlock()
 	if m.byTarget[udid] == reserveSentinel {
 		m.byTarget[udid] = resetSentinel
+		delete(m.takeoverHold, udid)
 	}
 }
 
@@ -255,10 +302,30 @@ func (m *Manager) Unreserve(udid string) {
 		m.mu.Unlock()
 		return
 	}
+	// Only takeover holds oblige the caller to erase the target before
+	// releasing it (the Reserve contract), so only they leave it clean.
+	// Plain reserves (janitor shutdowns, adoptions, dashboard ops) do not
+	// erase, and the dirty mark must survive them.
+	if m.takeoverHold[udid] {
+		delete(m.dirty, udid)
+	}
+	delete(m.takeoverHold, udid)
 	delete(m.byTarget, udid)
 	granted := m.promoteLocked(udid)
+	resets := m.takeResetsLocked()
 	m.mu.Unlock()
 	m.emit(granted)
+	m.startResets(resets)
+}
+
+// MarkClean clears a target's dirty mark. The warm pool calls it after an
+// erase-carrying rebuild (recycle, watchdog re-provision) that ran under
+// a plain — non-takeover — hold, so the freshly wiped target is not put
+// through a redundant pre-grant erase on its next reset:"erase" grant.
+func (m *Manager) MarkClean(udid string) {
+	m.mu.Lock()
+	delete(m.dirty, udid)
+	m.mu.Unlock()
 }
 
 // Close stops the background expiry loop.
@@ -383,8 +450,15 @@ func (m *Manager) Acquire(ctx context.Context, req proto.AcquireLeaseRequest) (p
 			continue
 		}
 		anyMatch = true
-		if _, leased := m.byTarget[targets[i].UDID]; !leased && free == nil {
-			free = &targets[i]
+		if _, leased := m.byTarget[targets[i].UDID]; !leased {
+			if free == nil {
+				free = &targets[i]
+			} else if req.Reset == "erase" && m.dirty[free.UDID] && !m.dirty[targets[i].UDID] {
+				// An erase-carrying request prefers a clean free target:
+				// a dirty one costs a pre-grant erase, a clean one is
+				// grantable immediately.
+				free = &targets[i]
+			}
 		}
 	}
 	if !anyMatch {
@@ -407,12 +481,21 @@ func (m *Manager) Acquire(ctx context.Context, req proto.AcquireLeaseRequest) (p
 		Record:        req.Record,
 		RequestedUDID: req.UDID,
 	}
+	// A reset:"erase" grant on a target dirtied by a previous lease is
+	// deferred: the lease queues while the target is erased, and the
+	// completed erase promotes it (FinishReset). The holder polls Get
+	// until the lease turns active, exactly like any queued grant.
+	if free != nil && m.preGrantEraseNeededLocked(l, free.UDID) {
+		m.startPreGrantEraseLocked(l, free.UDID)
+		free = nil
+	}
 	if free != nil {
 		l.State = proto.LeaseActive
 		l.TargetUDID = free.UDID
 		exp := m.now().Add(ttl)
 		l.ExpiresAt = &exp
 		m.byTarget[free.UDID] = l.ID
+		m.dirty[free.UDID] = true
 		snap := *l
 		grantedNow = &snap
 	} else {
@@ -423,7 +506,37 @@ func (m *Manager) Acquire(ctx context.Context, req proto.AcquireLeaseRequest) (p
 		m.queueDeadline[l.ID] = m.now().Add(QueueWaitTTL)
 	}
 	m.leases[l.ID] = l
-	return *l, nil
+	return m.viewLocked(*l), nil
+}
+
+// preGrantEraseNeededLocked reports whether granting lease l on target
+// udid must wait for a pre-grant erase: the lease demands reset:"erase"
+// and the target has carried a lease since its last successful reset.
+func (m *Manager) preGrantEraseNeededLocked(l *proto.Lease, udid string) bool {
+	return m.resetFn != nil && l.Reset == "erase" && m.dirty[udid]
+}
+
+// startPreGrantEraseLocked holds the target under the reset sentinel and
+// queues an erase for it; the caller's takeResetsLocked/startResets drain
+// runs it. The lease itself stays queued — FinishReset promotes it once
+// the erase completes (and clears the dirty mark so it is then granted).
+func (m *Manager) startPreGrantEraseLocked(l *proto.Lease, udid string) {
+	m.byTarget[udid] = resetSentinel
+	m.resetInFlight[udid] = true
+	m.preGrant[l.ID] = udid
+	pg := *l
+	pg.TargetUDID = udid
+	pg.Reset = "erase"
+	m.pendingResets = append(m.pendingResets, pg)
+}
+
+// viewLocked stamps derived read-only wire fields on a lease copy.
+func (m *Manager) viewLocked(l proto.Lease) proto.Lease {
+	if l.State == proto.LeaseActive && l.ExpiresAt != nil {
+		eis := int(l.ExpiresAt.Sub(m.now()).Seconds())
+		l.ExpiresInSeconds = &eis
+	}
+	return l
 }
 
 // Get returns a lease by ID (with a fresh queue position for queued leases).
@@ -444,7 +557,7 @@ func (m *Manager) Get(id string) (proto.Lease, error) {
 		l.QueuePosition = m.queuePositionLocked(l)
 		m.queueDeadline[l.ID] = m.now().Add(QueueWaitTTL)
 	}
-	return *l, nil
+	return m.viewLocked(*l), nil
 }
 
 // Peek returns a lease by ID without running expiry or emitting events,
@@ -493,7 +606,10 @@ func (m *Manager) Renew(id string, ttlSeconds int) (proto.Lease, error) {
 	l.TTLSeconds = int(ttl.Seconds())
 	exp := m.now().Add(ttl)
 	l.ExpiresAt = &exp
-	return *l, nil
+	// A renew inside the grace window rescues the lease: it is active
+	// again with a fresh expiry, as if it had never lapsed.
+	l.GraceUntil = nil
+	return m.viewLocked(*l), nil
 }
 
 // Release ends a lease (active or queued) and promotes the next queued
@@ -604,18 +720,33 @@ func (m *Manager) expireLocked() []proto.Lease {
 		events = append(events, *l)
 	}
 	for _, l := range m.leases {
-		if l.State == proto.LeaseActive && l.ExpiresAt != nil && now.After(*l.ExpiresAt) {
-			delete(m.byTarget, l.TargetUDID)
-			l.State = proto.LeaseExpired
-			m.terminalAt[l.ID] = now
-			events = append(events, *l)
-			if m.needsResetLocked(l) {
-				m.byTarget[l.TargetUDID] = resetSentinel
-				m.resetInFlight[l.TargetUDID] = true
-				m.pendingResets = append(m.pendingResets, *l)
-			} else {
-				events = append(events, m.promoteLocked(l.TargetUDID)...)
+		if l.State != proto.LeaseActive || l.ExpiresAt == nil || !now.After(*l.ExpiresAt) {
+			continue
+		}
+		if m.grace > 0 {
+			// The lease just passed its nominal expiry: enter the grace
+			// window (emitting a one-shot lease.expiring warning) and
+			// defer the actual expiry — and its reset/reclaim — until
+			// the window closes. A renew during the window rescues it.
+			if l.GraceUntil == nil {
+				gu := l.ExpiresAt.Add(m.grace)
+				l.GraceUntil = &gu
+				events = append(events, *l)
 			}
+			if !now.After(*l.GraceUntil) {
+				continue
+			}
+		}
+		delete(m.byTarget, l.TargetUDID)
+		l.State = proto.LeaseExpired
+		m.terminalAt[l.ID] = now
+		events = append(events, *l)
+		if m.needsResetLocked(l) {
+			m.byTarget[l.TargetUDID] = resetSentinel
+			m.resetInFlight[l.TargetUDID] = true
+			m.pendingResets = append(m.pendingResets, *l)
+		} else {
+			events = append(events, m.promoteLocked(l.TargetUDID)...)
 		}
 	}
 	for id, at := range m.terminalAt {
@@ -647,6 +778,19 @@ func (m *Manager) promoteLocked(udid string) []proto.Lease {
 			if l.Reset != "" && l.Reset != "none" && target.Kind == proto.TargetDevice {
 				continue
 			}
+			// A reset:"erase" lease landing on a dirty target is not
+			// granted yet: erase it first (the completed erase calls
+			// FinishReset, which promotes this lease onto the by-then
+			// clean target).
+			if m.preGrantEraseNeededLocked(l, udid) {
+				// One erase per queued lease: if one is already running
+				// for it on another target, don't erase this one too.
+				if _, inflight := m.preGrant[l.ID]; inflight {
+					continue
+				}
+				m.startPreGrantEraseLocked(l, udid)
+				return nil
+			}
 			m.queues[key] = append(q[:i], q[i+1:]...)
 			if len(m.queues[key]) == 0 {
 				delete(m.queues, key)
@@ -658,7 +802,9 @@ func (m *Manager) promoteLocked(udid string) []proto.Lease {
 			l.QueuePosition = 0
 			exp := m.now().Add(ttl)
 			l.ExpiresAt = &exp
+			l.GraceUntil = nil
 			m.byTarget[udid] = l.ID
+			m.dirty[udid] = true
 			return []proto.Lease{*l}
 		}
 	}
@@ -666,6 +812,7 @@ func (m *Manager) promoteLocked(udid string) []proto.Lease {
 }
 
 func (m *Manager) removeFromQueueLocked(l *proto.Lease) {
+	delete(m.preGrant, l.ID)
 	key := m.leaseQueueKey(l)
 	q := m.queues[key]
 	for i, id := range q {
@@ -684,7 +831,9 @@ func (m *Manager) emit(events []proto.Lease) {
 	onActive, onEvent := m.onActive, m.onEvent
 	m.mu.Unlock()
 	for _, e := range events {
-		if e.State == proto.LeaseActive && onActive != nil {
+		// Grace-window warnings are still-active leases; they are not
+		// (re-)grants, so onActive (the pool's thaw hook) must not fire.
+		if e.State == proto.LeaseActive && e.GraceUntil == nil && onActive != nil {
 			onActive(e)
 		}
 		if onEvent != nil {

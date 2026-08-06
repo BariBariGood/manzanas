@@ -42,6 +42,10 @@ func elemTreeStable(ctx context.Context, d elementDriver, udid string, p map[str
 	if err != nil {
 		return nil, err
 	}
+	refresh, err := boolFlag(p, "refresh", false)
+	if err != nil {
+		return nil, err
+	}
 	timeout, interval, err := waitParams(p, defaultStableTimeout)
 	if err != nil {
 		return nil, err
@@ -53,14 +57,14 @@ func elemTreeStable(ctx context.Context, d elementDriver, udid string, p map[str
 	var lastHash, lastGoodHash string
 	streak := 0
 	polls, elapsed, err := pollUntil(ctx, timeout, interval, func(ctx context.Context) error {
-		nodes, err := d.observeOnce(ctx, udid)
+		obs, err := d.observeOnce(ctx, udid, refresh)
 		if err != nil {
 			if errors.Is(err, errNotYet) {
 				streak, lastHash = 0, ""
 			}
 			return err
 		}
-		h := TreeHash(nodes)
+		h := TreeHash(obs.nodes)
 		lastGoodHash = h
 		if h == lastHash {
 			streak++

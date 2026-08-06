@@ -86,6 +86,16 @@ func wdaFrame(e wdaXMLElement) *Frame {
 	return f
 }
 
+// wdaViewport extracts the device viewport from WDA source XML: the root
+// XCUIElementTypeApplication element's frame is the screen bounds.
+func wdaViewport(src string) *Frame {
+	var root wdaXMLElement
+	if err := xml.Unmarshal([]byte(src), &root); err != nil {
+		return nil
+	}
+	return viewportFrame(wdaFrame(root))
+}
+
 func cleanAttr(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "(null)" {

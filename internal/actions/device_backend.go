@@ -241,6 +241,22 @@ func handleDeviceType(ctx context.Context, b *DeviceBackend, udid string, p map[
 	if !ok || text == "" {
 		return nil, badRequest("type requires a non-empty string payload field %q", "text")
 	}
+	opts, err := typeOptsFromPayload(p)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.validateTypeOpts(opts); err != nil {
+		return nil, err
+	}
+	if opts.requireFocus {
+		refresh, err := boolFlag(p, "refresh", false)
+		if err != nil {
+			return nil, err
+		}
+		if err := requireFocusedField(ctx, b, udid, refresh); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.Keys(ctx, text); err != nil {
 		return nil, b.wdaFail(udid, "type", err)
 	}
@@ -254,6 +270,11 @@ func handleDeviceObserve(ctx context.Context, b *DeviceBackend, udid string, p m
 	}
 	includeRaw, err := boolFlag(p, "include_raw", false)
 	if err != nil {
+		return nil, err
+	}
+	// refresh is a no-op on devices (every WDA source read is un-cached)
+	// but is validated for payload consistency with the simulator kind.
+	if _, err := boolFlag(p, "refresh", false); err != nil {
 		return nil, err
 	}
 	xml, err := c.Source(ctx)

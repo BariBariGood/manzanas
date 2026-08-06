@@ -158,16 +158,25 @@ const (
 
 // Lease is a time-bounded exclusive claim on a target.
 type Lease struct {
-	ID            string     `json:"id"`
-	TargetUDID    string     `json:"target_udid,omitempty"` // empty while queued
-	Labels        []string   `json:"labels"`
-	State         LeaseState `json:"state"`
-	AgentID       string     `json:"agent_id"`
-	Purpose       string     `json:"purpose,omitempty"`
-	TTLSeconds    int        `json:"ttl_seconds"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`     // nil while queued
-	QueuePosition int        `json:"queue_position,omitempty"` // 1-based; 0 when active
-	CreatedAt     time.Time  `json:"created_at"`
+	ID         string     `json:"id"`
+	TargetUDID string     `json:"target_udid,omitempty"` // empty while queued
+	Labels     []string   `json:"labels"`
+	State      LeaseState `json:"state"`
+	AgentID    string     `json:"agent_id"`
+	Purpose    string     `json:"purpose,omitempty"`
+	TTLSeconds int        `json:"ttl_seconds"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"` // nil while queued
+	// GraceUntil is set once an active lease passes its nominal
+	// expires_at while the daemon's renewal grace window is still open:
+	// the lease stays active (and renewable) until this deadline, after
+	// which it expires and its reset/reclaim runs. Additive (v0).
+	GraceUntil *time.Time `json:"grace_until,omitempty"`
+	// ExpiresInSeconds is the derived time remaining until expires_at,
+	// stamped on active leases by read endpoints (negative inside the
+	// grace window). Additive (v0).
+	ExpiresInSeconds *int      `json:"expires_in_seconds,omitempty"`
+	QueuePosition    int       `json:"queue_position,omitempty"` // 1-based; 0 when active
+	CreatedAt        time.Time `json:"created_at"`
 	// Reset is the auto-reset applied when the lease ends:
 	// "none" (default), "erase", or "snapshot:<name>".
 	Reset string `json:"reset,omitempty"`
@@ -189,11 +198,16 @@ type Lease struct {
 // UDID, when set, pins the request to that specific target (which must
 // also match Labels, if any are given).
 type AcquireLeaseRequest struct {
-	Labels     []string `json:"labels"`
-	UDID       string   `json:"udid,omitempty"`
-	AgentID    string   `json:"agent_id"`
-	Purpose    string   `json:"purpose,omitempty"`
-	TTLSeconds int      `json:"ttl_seconds,omitempty"` // default 300, max 3600
+	Labels  []string `json:"labels"`
+	UDID    string   `json:"udid,omitempty"`
+	AgentID string   `json:"agent_id"`
+	// SessionID is an accepted alias for agent_id (agents often identify
+	// themselves by a session ID). When agent_id is empty the alias fills
+	// it; agent_id stays canonical and wins when both are set. The Lease
+	// always carries the resolved value as agent_id.
+	SessionID  string `json:"session_id,omitempty"`
+	Purpose    string `json:"purpose,omitempty"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"` // default 300, max 3600
 	// Reset requests an auto-reset of the target when the lease is released
 	// or expires: "none" (default), "erase", or "snapshot:<name>".
 	Reset string `json:"reset,omitempty"`
@@ -201,6 +215,15 @@ type AcquireLeaseRequest struct {
 	// (recording starts once the target is booted under the lease and is
 	// stopped + ingested into the journal when the lease ends).
 	Record string `json:"record,omitempty"`
+}
+
+// NormalizeAgentID resolves the session_id alias into AgentID: when
+// agent_id is empty, session_id fills it. Servers call this once after
+// decoding so everything downstream sees the canonical field only.
+func (r *AcquireLeaseRequest) NormalizeAgentID() {
+	if r.AgentID == "" {
+		r.AgentID = r.SessionID
+	}
 }
 
 // RecordingRequest starts a screen recording on a leased, booted target
@@ -487,6 +510,14 @@ type JournalRef struct {
 type Error struct {
 	Code    string `json:"code"` // machine-readable, e.g. "not_found", "not_implemented"
 	Message string `json:"message"`
+	// Detail carries actionable context for the error when the daemon
+	// has any — e.g. a target_not_booted error references the daemon's
+	// record of who shut the target down and why. Additive (v0).
+	Detail string `json:"detail,omitempty"`
+	// RetryAfterSeconds is a machine-readable retry hint on transient
+	// refusals (code "overloaded"); HTTP responses mirror it in a
+	// Retry-After header. Additive (v0).
+	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
 }
 
 // Well-known error codes.
@@ -504,6 +535,8 @@ const (
 	ErrTargetNotBooted = "target_not_booted" // action requires a booted target but it is shut down
 	ErrUnavailable     = "unavailable"       // a required host tool (e.g. AXe) is missing
 	ErrTimeout         = "timeout"           // a wait_* action's budget was exhausted
+	ErrOffViewport     = "off_viewport"      // an element action's tap point lies outside the device viewport
+	ErrFocusRequired   = "focus_required"    // a typing action with require_focus found no focused text field (no on-screen keyboard)
 	ErrReadOnly        = "read_only"         // dashboard controls disabled (--dash-readonly)
 	ErrInternal        = "internal"
 )

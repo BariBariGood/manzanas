@@ -26,7 +26,7 @@ func (m *Manager) List() []proto.Lease {
 		} else {
 			c.QueuePosition = 0
 		}
-		out = append(out, c)
+		out = append(out, m.viewLocked(c))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out

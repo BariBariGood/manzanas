@@ -80,9 +80,10 @@ relative to *themselves*. Tunneled hosts therefore work out of the box when
 clients run on the broker host; clients elsewhere need the same tunnel (or
 direct reachability) locally.
 
-Prefer fixing the firewall (direct is the primary path): allow the
-daemon binary with `socketfilterfw`, or supervise a persistent SSH
-tunnel (auto-reconnect, idempotent startup, reboot persistence).
+Prefer fixing the firewall (direct is the primary path); for tunnel
+supervision — auto-reconnect, idempotent startup, reboot persistence —
+wrap the ssh command in a LaunchAgent, and allow the daemon binary with
+`/usr/libexec/ApplicationFirewall/socketfilterfw`.
 
 ## Health checking
 

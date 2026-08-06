@@ -99,7 +99,8 @@ type Pool struct {
 	// destructive pool transition (recycle, adoption, re-provision) so a
 	// lease can't be granted on a sim mid-wipe. Nil means no lease
 	// manager is wired (tests): transitions proceed unreserved.
-	reserve ReserveFunc
+	reserve   ReserveFunc
+	markClean func(udid string)
 	// awakeUntil marks members explicitly booted/thawed via the guarded
 	// registry: the watchdog leaves them un-parked until the deadline.
 	awakeUntil map[string]time.Time
@@ -164,6 +165,16 @@ type Pool struct {
 	// onShutdown is invoked after each successful pool-driven simulator
 	// shutdown (wired via SetShutdownFunc); nil means no listener.
 	onShutdown func(udid string)
+	// reporter records who shut a target down and why (wired via
+	// SetShutdownReporter); nil means no listener. The server surfaces
+	// it to leaseholders that later find their target not booted.
+	reporter func(udid, actor, reason string)
+	// bootReporter is invoked whenever a pool path observes a target
+	// reach Booted (wired via SetBootReporter); nil means no listener.
+	// The server uses it to drop stale shutdown-ledger entries that the
+	// boot has undone (rePark/Recycle boots never pass through the
+	// server's own boot handler).
+	bootReporter func(udid string)
 	// recording reports whether a target has a live (or finalizing)
 	// video recording (wired via SetRecordingFunc); nil means "unknown",
 	// treated as not recording. Parking or tearing a sim down
@@ -336,6 +347,26 @@ func (p *Pool) reserveTarget(udid string) (release func(rebuilt bool), takeover 
 	return fn(udid)
 }
 
+// SetMarkCleanFunc wires the lease manager's dirty-state clearing into
+// the pool: rebuild paths that erase a target under a plain (non-takeover)
+// hold call it so the freshly wiped sim is not re-erased pre-grant. Set
+// before serving traffic.
+func (p *Pool) SetMarkCleanFunc(fn func(udid string)) {
+	p.mu.Lock()
+	p.markClean = fn
+	p.mu.Unlock()
+}
+
+// notifyClean reports a successfully erased target to the lease manager.
+func (p *Pool) notifyClean(udid string) {
+	p.mu.Lock()
+	fn := p.markClean
+	p.mu.Unlock()
+	if fn != nil {
+		fn(udid)
+	}
+}
+
 // SetLeasedFunc wires live lease state into the pool so no park path
 // ever SIGSTOPs a sim its holder is using. Set before serving traffic.
 func (p *Pool) SetLeasedFunc(fn LeasedFunc) {
@@ -372,6 +403,42 @@ func (p *Pool) SetShutdownFunc(fn func(udid string)) {
 	p.mu.Lock()
 	p.onShutdown = fn
 	p.mu.Unlock()
+}
+
+// SetShutdownReporter wires a callback the pool invokes when a janitor
+// or watchdog decision shuts a simulator down, with the deciding actor
+// and the reason. Set before serving traffic.
+func (p *Pool) SetShutdownReporter(fn func(udid, actor, reason string)) {
+	p.mu.Lock()
+	p.reporter = fn
+	p.mu.Unlock()
+}
+
+func (p *Pool) reportShutdown(udid, actor, reason string) {
+	p.mu.Lock()
+	fn := p.reporter
+	p.mu.Unlock()
+	if fn != nil {
+		fn(udid, actor, reason)
+	}
+}
+
+// SetBootReporter wires a callback the pool invokes whenever one of its
+// synchronous boot paths (Add, rePark, Recycle) observes the target reach
+// Booted. Set before serving traffic.
+func (p *Pool) SetBootReporter(fn func(udid string)) {
+	p.mu.Lock()
+	p.bootReporter = fn
+	p.mu.Unlock()
+}
+
+func (p *Pool) reportBoot(udid string) {
+	p.mu.Lock()
+	fn := p.bootReporter
+	p.mu.Unlock()
+	if fn != nil {
+		fn(udid)
+	}
 }
 
 func (p *Pool) notifyShutdown(udid string) {
@@ -543,6 +610,34 @@ func (p *Pool) GateBoot(ctx context.Context, forUDID string) error {
 	return nil
 }
 
+// GateBootCheap is the boot-wait pre-check: the disk and load gates
+// (cheap syscalls) plus the cached running count — never a fresh target
+// listing, so an overloaded host isn't asked for a full simctl list per
+// waiter per poll. The cache is only trusted as a refusal signal: when
+// it is stale or under the cap the caller proceeds to the full gated
+// boot, which recounts authoritatively.
+func (p *Pool) GateBootCheap(forUDID string) error {
+	if p.cfg.MinFreeDisk > 0 {
+		if err := checkDisk(p.host, p.cfg.DevicesDir, uint64(p.cfg.MinFreeDisk)); err != nil && errors.Is(err, ErrDiskTooLow) {
+			return err
+		}
+	}
+	if p.cfg.LoadFactor > 0 {
+		if err := checkLoad(p.host, p.cfg.LoadFactor); err != nil && errors.Is(err, ErrLoadTooHigh) {
+			return err
+		}
+	}
+	if p.cfg.Class.MaxBootedRunning > 0 {
+		p.mu.Lock()
+		n, at := p.running, p.runningAt
+		p.mu.Unlock()
+		if !at.IsZero() && time.Since(at) <= runningCacheTTL && n >= p.cfg.Class.MaxBootedRunning {
+			return fmt.Errorf("%w: %d running >= cap %d (cached)", ErrTooManyRunning, n, p.cfg.Class.MaxBootedRunning)
+		}
+	}
+	return nil
+}
+
 // runningCount counts Booted sims that are not parked (parked sims are
 // SIGSTOPped and cost no CPU, so they don't consume running capacity).
 // exclude names a sim that must not count against the cap (the boot
@@ -552,7 +647,7 @@ func (p *Pool) runningCount(ctx context.Context, exclude string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	n, unmanaged := 0, 0
+	n, total, unmanaged := 0, 0, 0
 	p.mu.Lock()
 	members := make(map[string]bool, len(p.members))
 	for u := range p.members {
@@ -569,18 +664,27 @@ func (p *Pool) runningCount(ctx context.Context, exclude string) (int, error) {
 		if t.Kind != proto.TargetSimulator {
 			continue
 		}
-		if t.UDID != exclude && t.State == proto.StateBooted && !p.prk.IsParked(t.UDID) {
-			n++
-			if !members[t.UDID] && !booted[t.UDID] {
+		if t.State == proto.StateBooted && !p.prk.IsParked(t.UDID) {
+			total++
+			if t.UDID != exclude {
+				n++
+			}
+			if !members[t.UDID] && !booted[t.UDID] && t.UDID != exclude {
 				unmanaged++
 			}
 		}
 	}
+	// Every count refreshes the cache — boot-path calls (non-empty
+	// exclude) included, so GateBootCheap keeps a fresh refusal signal
+	// between polls. The cached figure is the unadjusted total; it is
+	// conservative by at most one (the excluded boot target itself),
+	// which is fine for a refusal-only signal.
+	p.mu.Lock()
+	p.running, p.runningAt = total, time.Now()
 	if exclude == "" {
-		p.mu.Lock()
-		p.running, p.runningAt, p.unmanagedN = n, time.Now(), unmanaged
-		p.mu.Unlock()
+		p.unmanagedN = unmanaged
 	}
+	p.mu.Unlock()
 	return n, nil
 }
 
@@ -662,6 +766,7 @@ func (p *Pool) BootAsync(ctx context.Context, udid string) error {
 			return
 		}
 		p.clearBootErr(udid)
+		p.reportBoot(udid)
 	}()
 	return nil
 }
@@ -718,6 +823,7 @@ func (p *Pool) bootGated(ctx context.Context, udid string) error {
 			}
 		}
 		p.clearBootErr(udid)
+		p.reportBoot(udid)
 		return nil
 	}
 	if err := p.GateBoot(ctx, udid); err != nil {
@@ -733,6 +839,7 @@ func (p *Pool) bootGated(ctx context.Context, udid string) error {
 	// a failure recorded by an earlier BootAsync no longer applies and
 	// must not refuse a later client boot.
 	p.clearBootErr(udid)
+	p.reportBoot(udid)
 	return nil
 }
 
@@ -837,6 +944,23 @@ func (p *Pool) OnGrant(udid string) {
 	p.log.Info("pool sim thawed for lease", "udid", udid, "thaw_ms", time.Since(start).Milliseconds())
 }
 
+// EnsureThawed wakes a parked pool sim before destructive out-of-band
+// work (e.g. a pre-grant erase, where no lease was granted so OnGrant
+// never fired): simctl shutdown against a SIGSTOPped tree wedges ~34s.
+// No-op for non-members and un-parked sims.
+func (p *Pool) EnsureThawed(udid string) error {
+	if udid == "" || !p.prk.IsParked(udid) {
+		return nil
+	}
+	start := time.Now()
+	if err := p.prk.Thaw(udid); err != nil {
+		p.log.Error("pool thaw failed", "udid", udid, "err", err)
+		return err
+	}
+	p.log.Info("pool sim thawed for reset", "udid", udid, "thaw_ms", time.Since(start).Milliseconds())
+	return nil
+}
+
 // OnReleased re-parks a pool member after its post-lease reset (the reset
 // already erased and rebooted or left it shut down; we ensure Booted then
 // park). Non-members are ignored.
@@ -870,6 +994,14 @@ func (p *Pool) Recycle(ctx context.Context, udid string) (err error) {
 		return fmt.Errorf("recycle %s: recording is finalizing", udid)
 	}
 	defer func() { release(err == nil) }()
+	// Runs before the release above (LIFO): a successful recycle erased
+	// the sim, so clear its dirty mark before the hold is dropped and
+	// queued leases are promoted onto it.
+	defer func() {
+		if err == nil {
+			p.notifyClean(udid)
+		}
+	}()
 	defer p.BeginTransition(udid)()
 	// ALWAYS thaw before shutdown (parked shutdown wedges ~34s); a
 	// failed thaw must abort rather than wedge the shutdown below.
@@ -880,6 +1012,7 @@ func (p *Pool) Recycle(ctx context.Context, udid string) (err error) {
 		return fmt.Errorf("recycle %s: shutdown: %w", udid, err)
 	}
 	p.notifyShutdown(udid)
+	p.reportShutdown(udid, "watchdog", "footprint recycle (erase + rebuild)")
 	if err := p.ReapOrphans(ctx, udid); err != nil {
 		p.log.Warn("orphan reap failed", "udid", udid, "err", err)
 	}

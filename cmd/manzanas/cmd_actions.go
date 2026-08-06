@@ -159,12 +159,14 @@ func cmdObserve(ctx context.Context, app *appEnv, args []string) error {
 }
 
 // cmdScreenshot implements `manzanas screenshot -o FILE --lease ID`
-// ("screenshot" action; result carries base64 image data under a
-// format-derived key, e.g. "png_base64" / "jpeg_base64").
+// ("screenshot" action; the daemon returns base64 image data under a
+// format-derived key inside `result`, e.g. `result.png_base64` /
+// `result.jpeg_base64`). `-o -` writes the raw image bytes to stdout.
+// Status text always goes to stderr so stdout stays clean for piping.
 func cmdScreenshot(ctx context.Context, app *appEnv, args []string) error {
 	fs := app.newFlagSet("screenshot")
 	lease := fs.String("lease", os.Getenv("MANZANAS_LEASE"), "active lease ID")
-	out := fs.String("o", "", "output file (required, e.g. shot.png)")
+	out := fs.String("o", "", "output file (required, e.g. shot.png; - writes raw image bytes to stdout)")
 	format := fs.String("format", "", "image format: png (default) or jpeg")
 	quality := fs.Int("quality", 0, "JPEG quality 1-100 (jpeg only)")
 	maxDim := fs.Int("max-dim", 0, "longer-edge pixel cap (server-side downscale)")
@@ -178,7 +180,10 @@ func cmdScreenshot(ctx context.Context, app *appEnv, args []string) error {
 		return fmt.Errorf("screenshot: --lease (or $MANZANAS_LEASE) is required")
 	}
 	if *out == "" {
-		return fmt.Errorf("screenshot: -o FILE.png is required")
+		return fmt.Errorf("screenshot: -o FILE.png is required (use -o - for raw bytes on stdout)")
+	}
+	if *out == "-" && app.json {
+		return fmt.Errorf("screenshot: --json cannot be combined with -o - (stdout carries the raw image bytes)")
 	}
 	res, err := app.client.ScreenshotOpts(ctx, *lease, *format, *quality, *maxDim)
 	if err != nil {
@@ -199,12 +204,21 @@ func cmdScreenshot(ctx context.Context, app *appEnv, args []string) error {
 	if err != nil {
 		return fmt.Errorf("screenshot: invalid base64 image data: %w", err)
 	}
+	if *out == "-" {
+		if _, err := app.stdout.Write(data); err != nil {
+			return err
+		}
+		fmt.Fprintf(app.stderr, "wrote %d bytes to stdout\n", len(data))
+		return nil
+	}
 	if err := os.WriteFile(*out, data, 0o644); err != nil {
 		return err
 	}
-	return app.emit(map[string]any{"file": *out, "bytes": len(data)}, func(w io.Writer) {
-		fmt.Fprintf(w, "wrote %s (%d bytes)\n", *out, len(data))
-	})
+	if app.json {
+		return app.printJSON(map[string]any{"file": *out, "bytes": len(data)})
+	}
+	fmt.Fprintf(app.stderr, "wrote %s (%d bytes)\n", *out, len(data))
+	return nil
 }
 
 // cmdApp implements `manzanas app install|launch|terminate` (app.* actions).

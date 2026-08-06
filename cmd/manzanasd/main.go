@@ -175,6 +175,7 @@ func main() {
 		warmMax         = flag.Int("warm-max-targets", actions.DefaultMaxWarmTargets, "max simulators kept warm at once")
 		warmTTL         = flag.Duration("warm-idle-ttl", actions.DefaultWarmIdleTTL, "shut a warm helper down after this much inactivity")
 		showVersion     = flag.Bool("version", false, "print version and exit")
+		leaseGrace      = flag.Duration("lease-renew-grace", envDuration("MANZANASD_LEASE_RENEW_GRACE", lease.DefaultRenewGrace), "renewal grace window after an active lease's nominal expiry during which renew still succeeds and the reset/reclaim is deferred; 0 disables (env MANZANASD_LEASE_RENEW_GRACE)")
 
 		poolSims          = flag.String("pool-sims", envOr("MANZANASD_POOL_SIMS", ""), "comma-separated sim UDIDs to keep in the park/thaw warm pool (env MANZANASD_POOL_SIMS)")
 		poolSlimProfile   = flag.String("pool-slim-profile", envOr("MANZANASD_POOL_SLIM_PROFILE", ""), "simslim profile applied to pool sims before parking (env MANZANASD_POOL_SLIM_PROFILE)")
@@ -284,6 +285,13 @@ func main() {
 			profile := *poolSlimProfile
 			poolSlim = func(ctx context.Context, udid string) error {
 				return hostSlim(ctx, udid, profile)
+			}
+			// Advisory: a profile that kills the speech daemons makes
+			// per-keystroke typing wedge apps on iOS 26.5 (#99).
+			if warnMsg, err := state.SlimProfileKeyboardWarning(profile); err != nil {
+				log.Warn("pool slim profile check failed", "profile", profile, "err", err)
+			} else if warnMsg != "" {
+				log.Warn(warnMsg)
 			}
 		}
 		// Pool erases go through the engine so a stamped-slim sim gets its
@@ -495,11 +503,23 @@ func main() {
 		}
 	}
 	leases := lease.New(reg, sink)
+	leases.SetRenewGrace(*leaseGrace)
 	defer leases.Close()
 	if pool != nil {
 		// Thaw a parked pool sim the instant its lease becomes active
 		// (cached-PID SIGCONT: ~25ms AS / ~225ms Intel).
 		leases.SetOnActive(func(l proto.Lease) { pool.OnGrant(l.TargetUDID) })
+		// Janitor/watchdog shutdown decisions land in the server's ledger
+		// so a leaseholder that finds its target down learns who and why.
+		pool.SetShutdownReporter(srv.NoteShutdown)
+		// Pool boot paths (rePark, Recycle, BootAsync) bring sims up
+		// without the server's boot handler: report them so stale
+		// shutdown-ledger entries don't outlive the shutdown they record.
+		pool.SetBootReporter(srv.NoteBoot)
+		// Boot waits probe the cheap gates (no target listing) between
+		// full attempts so waiting stays cheap on an overloaded host.
+		srv.SetBootGates(pool.GateBootCheap)
+		pool.SetMarkCleanFunc(leases.MarkClean)
 		pool.SetLeasedFunc(func(udid string) bool {
 			_, ok := leases.Active(udid)
 			return ok
@@ -537,6 +557,12 @@ func main() {
 			// The whole reset+re-park sequence is one pool transition so
 			// the footprint watchdog never parks a sim mid-erase/boot.
 			defer pool.BeginTransition(l.TargetUDID)()
+			// A pre-grant erase runs with no lease ever granted, so the
+			// OnGrant thaw never fired: wake a still-parked member before
+			// the destructive shutdown/erase (parked shutdown wedges).
+			if err := pool.EnsureThawed(l.TargetUDID); err != nil {
+				return err
+			}
 			if err := inner(l); err != nil {
 				return err
 			}

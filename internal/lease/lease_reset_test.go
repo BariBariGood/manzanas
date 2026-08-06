@@ -253,6 +253,7 @@ func TestClearQuarantineRefusedWhileResetInFlight(t *testing.T) {
 
 func TestExpiryRunsReset(t *testing.T) {
 	m := newTestManager(t)
+	m.SetRenewGrace(0) // exercise hard expiry, not the grace window
 	rec := newResetRecorder()
 	close(rec.release) // resets complete immediately
 	m.SetResetFunc(rec.fn)

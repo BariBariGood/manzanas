@@ -86,8 +86,8 @@ For all three: `0` = default, negative = disable. The capacity class also
 caps parked members (6 Intel / 4 AS) and serializes concurrent boots
 (1 Intel / 2 AS) — Intel boot storms drove 1-min load past 500.
 
-The daemon enforces per-host what the lock protocol asks agents to
-respect manually.
+These mirror fleet-wide sim-cap conventions; the daemon enforces per-host
+what the lock protocol asks agents to respect manually.
 
 ## Flags recap
 

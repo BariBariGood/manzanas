@@ -207,6 +207,14 @@ func wsError(id, code, msg string) proto.Envelope {
 	return proto.Envelope{V: proto.Version, ID: id, Error: &proto.Error{Code: code, Message: msg}}
 }
 
+// wsWireError carries a full wire error (including the additive detail
+// and retry_after_seconds fields) into the envelope, mirroring
+// writeWireError on the HTTP surface.
+func wsWireError(id string, e *proto.Error) proto.Envelope {
+	cp := *e
+	return proto.Envelope{V: proto.Version, ID: id, Error: &cp}
+}
+
 func (s *Server) dispatchWS(ctx context.Context, env proto.Envelope) proto.Envelope {
 	switch env.Method {
 	case proto.MethodListTargets:
@@ -221,8 +229,9 @@ func (s *Server) dispatchWS(ctx context.Context, env proto.Envelope) proto.Envel
 		if err := json.Unmarshal(env.Params, &req); err != nil {
 			return wsError(env.ID, proto.ErrBadRequest, err.Error())
 		}
+		req.NormalizeAgentID()
 		if req.AgentID == "" {
-			return wsError(env.ID, proto.ErrBadRequest, "agent_id is required")
+			return wsError(env.ID, proto.ErrBadRequest, "agent_id is required (session_id is accepted as an alias)")
 		}
 		if !state.ValidResetSpec(req.Reset) {
 			return wsError(env.ID, proto.ErrBadRequest, "reset must be none, erase, or snapshot:<name>")
@@ -366,7 +375,7 @@ func (s *Server) dispatchWS(ctx context.Context, env proto.Envelope) proto.Envel
 		}
 		res, wireErr := s.dispatchAction(ctx, req)
 		if wireErr != nil {
-			return wsError(env.ID, wireErr.Code, wireErr.Message)
+			return wsWireError(env.ID, wireErr)
 		}
 		return wsResult(env.ID, res)
 
@@ -377,7 +386,7 @@ func (s *Server) dispatchWS(ctx context.Context, env proto.Envelope) proto.Envel
 		}
 		res, wireErr := s.dispatchActionBatch(ctx, req)
 		if wireErr != nil {
-			return wsError(env.ID, wireErr.Code, wireErr.Message)
+			return wsWireError(env.ID, wireErr)
 		}
 		return wsResult(env.ID, res)
 
@@ -417,6 +426,13 @@ func (s *Server) wsTargetOp(ctx context.Context, env proto.Envelope) proto.Envel
 	if err := op(ctx, l, req.UDID); err != nil {
 		record("error", err.Error())
 		_, code := targetOpErr(err)
+		if code == proto.ErrOverloaded {
+			// Same cooperative retry hint as the HTTP surface.
+			return wsWireError(env.ID, &proto.Error{
+				Code: code, Message: err.Error(),
+				RetryAfterSeconds: int(overloadRetryAfter.Seconds()),
+			})
+		}
 		return wsError(env.ID, code, err.Error())
 	}
 	record("ok", "")

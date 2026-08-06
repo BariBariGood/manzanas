@@ -28,7 +28,7 @@ Commands:
   boot|shutdown UDID                   boot/shut down a leased target
   tap|swipe|type|button                HID actions (require --lease)
   observe                              compact a11y tree
-  screenshot -o FILE.png               capture the screen
+  screenshot -o FILE.png               capture the screen (-o - for stdout)
   record start|stop                    screen recording (requires --lease)
   app install|launch|terminate         app lifecycle
   state snapshot|restore|fixture       deterministic state control

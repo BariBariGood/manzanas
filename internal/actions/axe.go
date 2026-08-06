@@ -34,7 +34,7 @@ type AXeBackend struct {
 	// warmObserve, when set, runs a single a11y poll through a resident
 	// warm helper instead of spawning the AXe CLI; a transport failure
 	// falls back to the cold poll.
-	warmObserve func(ctx context.Context, udid string) ([]*Node, error)
+	warmObserve func(ctx context.Context, udid string) (observation, error)
 	// warmHID, when set, sends one HID op through a resident warm helper;
 	// a transport failure before delivery falls back to the cold CLI.
 	warmHID func(ctx context.Context, udid, op string, args map[string]any) error
@@ -94,7 +94,7 @@ func NewAXe(opts ...Option) *AXeBackend {
 // SetWarmObserver installs an accelerated single-poll observer used by
 // the wait_* actions (and any other per-poll a11y read); a poll whose
 // warm attempt hits a transport failure runs cold instead.
-func (b *AXeBackend) SetWarmObserver(fn func(ctx context.Context, udid string) ([]*Node, error)) {
+func (b *AXeBackend) SetWarmObserver(fn func(ctx context.Context, udid string) (observation, error)) {
 	b.warmObserve = fn
 }
 

@@ -19,7 +19,11 @@ import (
 type WarmBackend struct {
 	pool *Pool
 	cold Backend
-	log  *slog.Logger
+	// coldAXe is true when the wrapped cold backend can actually observe
+	// (an AXe binary exists); a refresh:true observe is only re-routed
+	// cold when it can be served there.
+	coldAXe bool
+	log     *slog.Logger
 	// warmOps maps an action kind to its simbridge translation; kinds not
 	// present are always dispatched cold.
 	warmOps map[string]warmOp
@@ -60,7 +64,11 @@ func NewWarm(cold Backend, factory HelperFactory, cfg PoolConfig) *WarmBackend {
 		"key_sequence": {op: "key_sequence", encode: encodeKeySequence, decode: decodeKeySequence},
 		"observe":      {op: "describe_ui", encode: encodeObserve, decode: nil, idempotent: true}, // custom path below
 	}
+	// A non-AXe cold backend is assumed able to observe; only a known
+	// AXe-less host keeps refresh observes on the warm helper.
+	b.coldAXe = true
 	if ab, ok := cold.(*AXeBackend); ok {
+		b.coldAXe = ab.AXeAvailable()
 		// Accelerate the cold backend's per-poll a11y reads (wait_for_element,
 		// wait_tree_stable) through the resident helper.
 		ab.SetWarmObserver(b.observePoll)
@@ -194,7 +202,7 @@ func (b *WarmBackend) hashTree(ctx context.Context, udid string) string {
 // hashTree, a poll that outlives the caller's deadline is abandoned
 // rather than cancelled, so a short wait budget cannot desync the
 // helper stream and cost the resident helper.
-func (b *WarmBackend) observePoll(ctx context.Context, udid string) ([]*Node, error) {
+func (b *WarmBackend) observePoll(ctx context.Context, udid string) (observation, error) {
 	type callOut struct {
 		res map[string]any
 		err error
@@ -210,20 +218,20 @@ func (b *WarmBackend) observePoll(ctx context.Context, udid string) ([]*Node, er
 	case o := <-ch:
 		res, err = o.res, o.err
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return observation{}, ctx.Err()
 	}
 	if err != nil {
 		if isTransientA11yError(err) {
-			return nil, errNotYet
+			return observation{}, errNotYet
 		}
-		return nil, err
+		return observation{}, err
 	}
 	raw, _ := res["raw"].(string)
 	nodes, err := CompactTree([]byte(raw))
 	if err != nil || len(nodes) == 0 {
-		return nil, errNotYet
+		return observation{}, errNotYet
 	}
-	return nodes, nil
+	return observation{nodes: nodes, viewport: rawViewport([]byte(raw))}, nil
 }
 
 func (b *WarmBackend) dispatchWarm(ctx context.Context, udid string, req proto.ActionRequest, w warmOp) (map[string]any, error) {
@@ -243,7 +251,18 @@ func (b *WarmBackend) dispatchWarm(ctx context.Context, udid string, req proto.A
 
 // warmObserve mirrors the cold backend's observe semantics (retry while
 // the a11y bridge attaches, compact, hash) over the warm describe_ui op.
+// A refresh:true payload runs the observe cold instead: a freshly spawned
+// AXe process opens a fresh accessibility connection, which cannot serve
+// the stale snapshot a long-lived resident helper occasionally does (a
+// frontmost modal/sheet missing from the tree for minutes).
 func (b *WarmBackend) warmObserve(ctx context.Context, udid string, p map[string]any) (map[string]any, error) {
+	refresh, err := boolFlag(p, "refresh", false)
+	if err != nil {
+		return nil, err
+	}
+	if refresh && b.coldAXe {
+		return nil, errColdOnly
+	}
 	includeRaw, err := boolFlag(p, "include_raw", false)
 	if err != nil {
 		return nil, err
@@ -258,6 +277,10 @@ func (b *WarmBackend) warmObserve(ctx context.Context, udid string, p map[string
 	res := map[string]any{
 		"tree": nodes,
 		"hash": TreeHash(nodes),
+	}
+	if len(nodes) == 0 {
+		// Same retryable signal as the cold path (see handleObserve).
+		res["detail"] = "empty_tree"
 	}
 	if includeRaw {
 		res["raw"] = string(raw)

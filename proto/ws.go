@@ -54,6 +54,10 @@ const (
 const (
 	EventLeaseGranted = "lease.granted" // a queued lease became active
 	EventLeaseExpired = "lease.expired"
-	EventTargetState  = "target.state"  // a target changed state
-	EventJournalEntry = "journal.entry" // one journal entry, on a journal.tail subscription
+	// EventLeaseExpiring warns that an active lease passed its nominal
+	// expires_at and entered the renewal grace window (grace_until is
+	// set on the payload): renew now or the lease expires for real.
+	EventLeaseExpiring = "lease.expiring"
+	EventTargetState   = "target.state"  // a target changed state
+	EventJournalEntry  = "journal.entry" // one journal entry, on a journal.tail subscription
 )

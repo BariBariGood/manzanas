@@ -25,6 +25,9 @@ manzanas lease acquire --labels iphone-17 --agent my-agent --ttl 3600 \
     --reset erase       # optional: auto-erase when the lease ends
 ```
 
+`--agent` sets the wire field `agent_id` — the caller identity on the
+lease (the raw API also accepts `session_id` as an alias for it).
+
 - Without `--udid` the daemon picks **any** matching target — including
   sims other (non-manzanasd) agents created. On shared Macs check
   `/tmp/manzanas_locks/` first and pin your own sim with `--udid`.
@@ -47,6 +50,11 @@ manzanas app install /path/on/the/mac/MyApp.app
 manzanas app launch com.example.myapp
 ```
 
+- Boot is a **REST route, not an action kind**: over raw HTTP it is
+  `POST /v0/targets/{udid}/boot` with `{"lease_id":"..."}` (the
+  `manzanas boot` CLI wraps exactly that). Sending `{"kind":"boot"}` to
+  `POST /v0/actions/{udid}` is rejected — `/v0/actions` only carries the
+  interaction kinds in PROTOCOL.md §5 (tap, type, observe, …).
 - `boot` is asynchronous — poll `manzanas targets` (or `--json` and check
   `state`) until `Booted`. Pool sims thaw in ~0–3 s; cold boots on Intel
   can take minutes and are subject to the daemon's load/disk/cap gates
@@ -55,6 +63,11 @@ manzanas app launch com.example.myapp
   For Expo/RN debug builds, Metro must be reachable from the sim
   (typically `localhost:8081` on the same Mac) or the app boots to the
   "No script URL provided" screen.
+- **Don't trust the default `:8081` attach on shared Macs** — the app
+  binds to whichever Metro owns the port, which may be another repo's.
+  Pin it first: `xcrun simctl spawn <udid> defaults write <bundle-id>
+  RCT_jsLocation "localhost:<port>"`, then relaunch (see
+  [troubleshooting.md](troubleshooting.md), "wrong Metro on :8081").
 
 ## 3. Drive the UI: observe, composite actions, batches
 
@@ -99,9 +112,10 @@ Gotchas that cost real time:
   such as `params` is rejected with `400 bad_request` naming the field —
   see "Batch entries are strict about their keys" below. Still prefer
   `stop_on_error: true` and check per-entry `ok`.
-- Inline JPEG screenshots come back base64 under `jpeg_base64` (key
-  follows `format`). `--format jpeg --max-dim 800` turns a ~270 KB PNG
-  into ~30-60 KB — use it for every evidence shot.
+- Inline screenshots come back base64 **inside the action result
+  envelope** — `result.jpeg_base64` / `result.png_base64` (key follows
+  `format`), not top-level. `--format jpeg --max-dim 800` turns a
+  ~270 KB PNG into ~30-60 KB — use it for every evidence shot.
 - First action after boot pays the a11y bridge warm-up (~3-5 s cold,
   ~0.4 s once the warm helper is resident). `observe` retries the
   "No translation object returned" window internally.

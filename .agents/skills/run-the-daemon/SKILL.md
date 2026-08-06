@@ -39,7 +39,7 @@ binary. Remove with `deploy/uninstall.sh [--purge]`.
 | `--no-warm` | off | disable the warm actions backend |
 | `--warm-max-targets` / `--warm-idle-ttl` | 4 / 5m | resident helper capacity / idle shutdown |
 | `--janitor-reap-stale-locks` | off | let the janitor shut down (never delete) unmanaged Booted sims whose `sim-<udid>` fleet lock is stale (>=2h) or missing, after the staleness persists a full grace (>=10 min); recommended ON for fleet daemons |
-| `--lock-dir` | `/tmp/manzanas_locks` (env `MANZANAS_LOCK_DIR`) | fleet lock directory holding `sim-<udid>` lock files |
+| `--lock-dir` | `/tmp/manzanas_locks` (env `MANZANAS_LOCK_DIR`) | fleet lock directory holding `sim-<udid>` lock files; fleet machines set `MANZANAS_LOCK_DIR=/tmp/manzanas_locks` |
 | `--journal-dir` | `~/.manzanasd/journal` | empty string disables the journal |
 | `--journal-max-age` / `--journal-max-bytes` | 168h / 2 GiB | journal GC bounds |
 | `--stream-max-streams` / `--stream-max-viewers` / `--stream-max-fps` / `--stream-linger` | see `--help` | streaming limits |

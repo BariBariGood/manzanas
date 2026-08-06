@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/BariBariGood/manzanas/internal/lease"
@@ -40,6 +41,51 @@ func TestReleaseFiresLeaseEndHook(t *testing.T) {
 		}
 	default:
 		t.Fatal("release did not fire the lease-end hook")
+	}
+}
+
+// session_id is an accepted alias for agent_id on acquire: it fills
+// agent_id when that field is empty, agent_id wins when both are set,
+// and the granted Lease always carries the resolved agent_id.
+func TestAcquireAcceptsSessionIDAlias(t *testing.T) {
+	ts := newTestServer(t)
+
+	var byAlias proto.Lease
+	resp := doJSON(t, "POST", ts.URL+"/v0/leases",
+		map[string]any{"labels": []string{"simulator"}, "session_id": "sess-1"}, &byAlias)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("acquire via session_id: %d", resp.StatusCode)
+	}
+	if byAlias.AgentID != "sess-1" {
+		t.Fatalf("lease agent_id = %q, want %q", byAlias.AgentID, "sess-1")
+	}
+
+	var both proto.Lease
+	resp = doJSON(t, "POST", ts.URL+"/v0/leases",
+		map[string]any{"labels": []string{"iphone-17-pro"}, "agent_id": "canonical", "session_id": "alias"}, &both)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("acquire with both fields: %d", resp.StatusCode)
+	}
+	if both.AgentID != "canonical" {
+		t.Fatalf("agent_id must win over session_id: got %q", both.AgentID)
+	}
+}
+
+// A missing caller identity must name both accepted fields so callers
+// that sent session_id-shaped requests to older daemons can self-serve.
+func TestAcquireWithoutAgentIDNamesTheAlias(t *testing.T) {
+	ts := newTestServer(t)
+
+	var errBody proto.Error
+	resp := doJSON(t, "POST", ts.URL+"/v0/leases",
+		map[string]any{"labels": []string{"simulator"}}, &errBody)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("acquire without identity: %d", resp.StatusCode)
+	}
+	if errBody.Code != proto.ErrBadRequest ||
+		!strings.Contains(errBody.Message, "agent_id") ||
+		!strings.Contains(errBody.Message, "session_id") {
+		t.Fatalf("error must mention agent_id and the session_id alias: %+v", errBody)
 	}
 }
 

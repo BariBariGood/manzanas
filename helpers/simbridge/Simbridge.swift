@@ -12,7 +12,7 @@
 //   request:  {"id":"1","op":"tap","args":{"x":100,"y":200}}
 //   response: {"id":"1","ok":true,"result":{...}}
 //           | {"id":"1","ok":false,"code":"bad_request","error":"..."}
-// Ops: ping, tap, swipe, button, key, key_sequence, describe_ui.
+// Ops: ping, tap, swipe, button, key, key_sequence, key_combo, describe_ui.
 //
 // Build: see build.sh (links against the FBSimulatorControl frameworks
 // shipped with an AXe install, MIT-licensed).
@@ -202,6 +202,30 @@ final class Bridge {
             }
             try await send(.composite(events))
             return ["count": codes.count]
+        case "key_combo":
+            // Chorded shortcut: hold the modifiers in order, press the key,
+            // release the modifiers in reverse (e.g. Cmd-V for the daemon's
+            // paste typing strategy).
+            guard let rawMods = a["modifiers"]?.doubles, !rawMods.isEmpty else {
+                throw BridgeError.badRequest("key_combo requires a non-empty modifiers array")
+            }
+            guard let rawKey = a["keycode"]?.double, let key = UInt32(exactly: rawKey) else {
+                throw BridgeError.badRequest("key_combo requires an integer keycode in 0...UInt32.max")
+            }
+            let mods = try rawMods.map { raw -> UInt32 in
+                guard let code = UInt32(exactly: raw) else {
+                    throw BridgeError.badRequest("modifiers must be integers in 0...UInt32.max")
+                }
+                return code
+            }
+            var events: [FBSimulatorHIDEvent] = []
+            for m in mods { events.append(.keyboard(direction: .down, keyCode: m)) }
+            events.append(.delay(0.05))
+            events.append(.shortKeyPress(key))
+            events.append(.delay(0.05))
+            for m in mods.reversed() { events.append(.keyboard(direction: .up, keyCode: m)) }
+            try await send(.composite(events))
+            return ["keycode": Int(key), "modifiers": mods.map { Int($0) }]
         case "describe_ui":
             let element = try await simulator.accessibilityElementForFrontmostApplication()
             defer { element.close() }

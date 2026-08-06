@@ -139,6 +139,7 @@ func (p *Pool) reclaimIdle(ctx context.Context, udid string) bool {
 		p.log.Warn("janitor: reclaim shutdown failed", "udid", udid, "err", err)
 		return false
 	}
+	p.reportShutdown(udid, "janitor", "idle daemon-booted sim reclaimed (no lease, stream, or recording)")
 	p.forgetDaemonBooted(udid)
 	return true
 }

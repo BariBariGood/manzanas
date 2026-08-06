@@ -91,29 +91,33 @@ func pollUntil(ctx context.Context, timeout, interval time.Duration, fn func(con
 
 // observeOnce runs a single describe-ui poll and compacts it. Transient
 // bridge races (not attached yet, non-JSON output) come back as errNotYet
-// so wait loops treat them as "no tree yet" instead of failing.
-func (b *AXeBackend) observeOnce(ctx context.Context, udid string) ([]*Node, error) {
-	if b.warmObserve != nil {
-		nodes, err := b.warmObserve(ctx, udid)
+// so wait loops treat them as "no tree yet" instead of failing. refresh
+// skips the resident warm helper so the poll always runs on a freshly
+// spawned AXe process, whose accessibility connection cannot be stale.
+func (b *AXeBackend) observeOnce(ctx context.Context, udid string, refresh bool) (observation, error) {
+	// A refresh can only be honored when the cold CLI exists; on a
+	// helper-only host the warm read is the sole way to observe.
+	if b.warmObserve != nil && (!refresh || b.axePath == "") {
+		obs, err := b.warmObserve(ctx, udid)
 		var te *TransportError
 		if !errors.As(err, &te) {
-			return nodes, err
+			return obs, err
 		}
 		// Warm helper unavailable: run this poll cold.
 	}
 	raw, err := b.axe(ctx, udid, "describe-ui")
 	if err != nil {
 		if isTransientA11yError(err) {
-			return nil, errNotYet
+			return observation{}, errNotYet
 		}
-		return nil, err
+		return observation{}, err
 	}
 	nodes, err := CompactTree(raw)
 	if err != nil || len(nodes) == 0 {
 		// A skeleton tree that compacts to nothing is the same
 		// bridge-not-ready race as a non-JSON body; keep polling. The
 		// wait's own timeout bounds a legitimately element-free screen.
-		return nil, errNotYet
+		return observation{}, errNotYet
 	}
-	return nodes, nil
+	return observation{nodes: nodes, viewport: rawViewport(raw)}, nil
 }

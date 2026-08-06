@@ -63,17 +63,78 @@ func handleType(ctx context.Context, b *AXeBackend, udid string, p map[string]an
 	if !ok || text == "" {
 		return nil, badRequest("type requires a non-empty string payload field %q", "text")
 	}
-	typed, err := b.typeInto(ctx, udid, text)
+	opts, err := typeOptsFromPayload(p)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"typed_runes": typed}, nil
+	if opts.requireFocus {
+		refresh, err := boolFlag(p, "refresh", false)
+		if err != nil {
+			return nil, err
+		}
+		if err := requireFocusedField(ctx, b, udid, refresh); err != nil {
+			return nil, err
+		}
+	}
+	typed, err := b.typeInto(ctx, udid, text, opts)
+	if err != nil {
+		return nil, err
+	}
+	res := map[string]any{"typed_runes": typed}
+	if opts.strategy == typeStrategyPaste {
+		res["strategy"] = typeStrategyPaste
+	}
+	return res, nil
+}
+
+// Typing strategies for type / type_into_element.
+const (
+	// typeStrategyHID synthesizes one hardware-keyboard event per rune
+	// (the historical behavior).
+	typeStrategyHID = "hid"
+	// typeStrategyPaste copies the text onto the simulator pasteboard
+	// (`simctl pbcopy`) and sends a single Cmd-V chord, avoiding
+	// per-keystroke hardware-keyboard events entirely. On iOS 26.5 sims
+	// slimmed without the speech daemons (assistantd/corespeechd),
+	// per-keystroke typing wedges the frontmost app's main thread in
+	// AFDictationConnection; paste side-steps that path. Tradeoff: the
+	// simulator pasteboard is overwritten, the field receives the text
+	// in one shot (per-keystroke handlers fire once), and the field must
+	// accept paste.
+	typeStrategyPaste = "paste"
+)
+
+// typeOpts carries the optional typing payload fields shared by type and
+// type_into_element.
+type typeOpts struct {
+	strategy     string
+	requireFocus bool
+}
+
+func typeOptsFromPayload(p map[string]any) (typeOpts, error) {
+	opts := typeOpts{strategy: typeStrategyHID}
+	if v, ok := p["strategy"]; ok {
+		s, ok := v.(string)
+		if !ok || (s != typeStrategyHID && s != typeStrategyPaste) {
+			return opts, badRequest("payload field %q must be %q or %q", "strategy", typeStrategyHID, typeStrategyPaste)
+		}
+		opts.strategy = s
+	}
+	rf, err := boolFlag(p, "require_focus", false)
+	if err != nil {
+		return opts, err
+	}
+	opts.requireFocus = rf
+	return opts, nil
 }
 
 // typeInto types text into the focused field, returning the rune count.
 // Dispatch prefers the resident warm helper (falling back to the AXe CLI
 // when the helper is absent or doesn't implement "type").
-func (b *AXeBackend) typeInto(ctx context.Context, udid, text string) (int, error) {
+func (b *AXeBackend) typeInto(ctx context.Context, udid, text string, opts typeOpts) (int, error) {
+	if opts.strategy == typeStrategyPaste {
+		return b.pasteInto(ctx, udid, text)
+	}
 	if err := b.dispatchHID(ctx, udid, "type", map[string]any{"text": text},
 		"type", text); err != nil {
 		// Only characters with a HID keycode can be synthesized; a
@@ -85,6 +146,45 @@ func (b *AXeBackend) typeInto(ctx context.Context, udid, text string) (int, erro
 		return 0, err
 	}
 	return len([]rune(text)), nil
+}
+
+// HID usage codes for the paste chord (USB HID keyboard usage page).
+const (
+	hidKeyLeftGUI = 227 // Left Command
+	hidKeyV       = 25
+)
+
+// pasteInto implements the paste typing strategy: pasteboard set via
+// `simctl pbcopy`, then one Cmd-V chord. The chord prefers the resident
+// warm helper's key_combo op; a helper predating it falls back to
+// `axe key-combo`.
+func (b *AXeBackend) pasteInto(ctx context.Context, udid, text string) (int, error) {
+	if _, err := b.simctlInput(ctx, []byte(text), "pbcopy", udid); err != nil {
+		return 0, err
+	}
+	err := b.dispatchHID(ctx, udid, "key_combo",
+		map[string]any{"modifiers": []any{float64(hidKeyLeftGUI)}, "keycode": float64(hidKeyV)},
+		"key-combo", "--modifiers", strconv.Itoa(hidKeyLeftGUI), "--key", strconv.Itoa(hidKeyV))
+	if err != nil {
+		if e, ok := err.(*Error); ok && axePredatesKeyCombo(e.Message) {
+			return 0, unavailable("the installed AXe predates `key-combo` (needed for the paste typing strategy); upgrade AXe or deploy the simbridge warm helper: %s", e.Message)
+		}
+		return 0, err
+	}
+	return len([]rune(text)), nil
+}
+
+// axePredatesKeyCombo recognizes an AXe CLI rejecting the key-combo
+// subcommand (added after v1.8), so the failure surfaces as an
+// actionable "upgrade AXe" instead of a raw usage error.
+func axePredatesKeyCombo(msg string) bool {
+	m := strings.ToLower(msg)
+	for _, s := range []string{"unexpected argument", "unknown command", "unknown subcommand", "unrecognized", "help for axe"} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // tapXY taps at screen coordinates, preferring the resident warm helper.

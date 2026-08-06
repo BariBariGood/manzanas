@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,6 +110,76 @@ func HostSlimProfileCheck(profile string) error {
 	}
 	_, err := resolveSlimProfile(profile)
 	return err
+}
+
+// keyboardDaemons are the per-sim launchd services the iOS 26.5
+// hardware-keyboard path depends on: with them disabled, the first
+// hardware-keyboard keystroke wedges the frontmost app's main thread in
+// AFDictationConnection/UIDictationController. They belong to simslim's
+// "siri" category.
+var keyboardDaemons = []string{"com.apple.assistantd", "com.apple.corespeechd"}
+
+// SlimProfileKeyboardWarning inspects a resolved slim profile and, when it
+// disables the speech daemons the hardware-keyboard typing path needs,
+// returns a human-readable warning to log at startup. It returns "" when
+// the profile keeps them (via an except:"siri" category or explicit keep
+// entries), when the profile is simslim's built-in default (which the
+// caller should treat as unsafe but unfixable here), or "" plus an error
+// when the profile cannot be read. Advisory only: typing via the "paste"
+// strategy stays safe either way.
+func SlimProfileKeyboardWarning(profile string) (string, error) {
+	if profile == "" {
+		return "", nil
+	}
+	if profile == "default" {
+		return fmt.Sprintf("pool slim profile %q disables the speech daemons (%s); iOS 26.5 hardware-keyboard typing on those sims wedges apps in AFDictationConnection — use a profile keeping them or the type action's strategy:\"paste\"", profile, strings.Join(keyboardDaemons, ", ")), nil
+	}
+	path, err := resolveSlimProfile(profile)
+	if err != nil {
+		return "", err
+	}
+	safe, err := slimProfileFileKeyboardSafe(path)
+	if err != nil {
+		return "", err
+	}
+	if safe {
+		return "", nil
+	}
+	return fmt.Sprintf("pool slim profile %q (%s) disables the speech daemons (%s); iOS 26.5 hardware-keyboard typing on those sims wedges apps in AFDictationConnection — add `\"except\": [\"siri\"]` or `\"keep\": [%q, %q]` to the profile, or type with strategy:\"paste\"", profile, path, strings.Join(keyboardDaemons, ", "), keyboardDaemons[0], keyboardDaemons[1]), nil
+}
+
+// slimProfileFileKeyboardSafe parses a simslim profile file
+// ({name, description, except: [categories], keep: [services]}) and
+// reports whether it retains every keyboardDaemons service — either the
+// whole "siri" category is excepted from slimming or each daemon is
+// individually kept.
+func slimProfileFileKeyboardSafe(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("slim profile %s: %w", path, err)
+	}
+	var p struct {
+		Except []string `json:"except"`
+		Keep   []string `json:"keep"`
+	}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return false, fmt.Errorf("slim profile %s: %w", path, err)
+	}
+	for _, c := range p.Except {
+		if c == "siri" {
+			return true, nil
+		}
+	}
+	kept := make(map[string]bool, len(p.Keep))
+	for _, s := range p.Keep {
+		kept[s] = true
+	}
+	for _, d := range keyboardDaemons {
+		if !kept[d] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func findSimslim() string {

@@ -1,5 +1,9 @@
 # manzanas
 
+[![Release](https://img.shields.io/github/v/release/BariBariGood/manzanas)](https://github.com/BariBariGood/manzanas/releases)
+[![CI](https://github.com/BariBariGood/manzanas/actions/workflows/ci.yml/badge.svg)](https://github.com/BariBariGood/manzanas/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/BariBariGood/manzanas)](LICENSE)
+
 A Mac daemon for multi-agent iOS simulator fleet orchestration: leases,
 actions, streaming, deterministic state, and an exportable run journal for
 AI agents (and humans) sharing simulators.
@@ -9,7 +13,8 @@ simulator registry, the lease table, the warm pool, action backends,
 streamers, golden images, and the run journal. Clients (`manzanas` CLI, MCP
 facade, SDKs) are thin and cross-platform, speaking a versioned JSON
 protocol over HTTP + WebSocket. `manzanas-broker` federates N daemons
-behind one endpoint.
+behind one endpoint — start with one Mac, and when you outgrow it the same
+clients lease across the whole fleet without changing a line.
 
 ![manzanas CLI demo: two agents lease warm-pool simulators, drive one, and export journal evidence](docs/assets/demo.webp)
 
@@ -19,6 +24,12 @@ and export the run journal as PR-ready evidence.*
 
 **Website: [manzanasd.vercel.app](https://manzanasd.vercel.app)** (source in
 [`site/`](site/)).
+
+![manzanas demo: lease, warm tap, screenshot, live view, journal export](docs/assets/demo.webp)
+
+*A full agent loop from a Linux box: lease → warm tap (~180 ms over the
+network, ~50 ms on-host) → screenshot → journal `export.md` — with the
+live `/view` MJPEG stream of the simulator on the right.*
 
 ## Install
 
@@ -49,7 +60,9 @@ and pay huge fixed costs. manzanasd removes both, with measured numbers
 - **Warm actions**: a resident per-sim helper makes an end-to-end tap
   **~36 ms vs ~950 ms** cold (per-action AXe spawn) — ~3 s cold on Intel.
 - **Deterministic state**: snapshots, fixtures, per-lease auto-reset, and
-  golden images that stamp out pre-slimmed sims in seconds.
+  golden images that stamp out slimmed sims in seconds (**~0.75 GB vs
+  ~5 GB stock**, via [simslim](https://github.com/MobAI-App/simslim)) —
+  how one Mac runs a dozen sims.
 - **Evidence**: every mutating op under a lease is journaled, with
   content-addressed artifacts and a PR-ready markdown export.
 
@@ -58,13 +71,18 @@ and pay huge fixed costs. manzanasd removes both, with measured numbers
 | Leases | TTL-bounded exclusive claims, labels, FIFO queues, auto-reset |
 | Warm pool | park/thaw (SIGSTOP) pool sims: ~0.28 s lease-to-live, ~0 idle CPU |
 | Actions | cold (AXe) + warm (resident helper) taps/swipes/typing, composite `tap_element`, batches |
-| Streaming | MJPEG fan-out, browser `/view` page, WS frames |
+| Streaming | MJPEG fan-out, browser [`/view` page](docs/assets/live-view.png), WS frames |
 | Video | per-lease `simctl` recordings that land in the journal |
 | State | snapshots, fixtures, per-lease auto-reset, golden images |
 | Journal | append-only evidence per run, artifacts, `export.md` |
+| Dashboard | read-only [web dashboard](docs/assets/dashboard.png) at `/dash`: fleet, leases, multiview, journal browser |
 | Devices | physical iPhones via devicectl + WebDriverAgent (`--devices`) |
 | Fleet | `manzanas-broker` federates N Macs behind one endpoint |
 | Clients | `manzanas` CLI, MCP tools over stdio, npm wrapper, GitHub Action |
+
+| ![Live MJPEG view of a leased simulator at /view](docs/assets/live-view.png) | ![Built-in fleet dashboard at /dash](docs/assets/dashboard.png) |
+|---|---|
+| the browser `/view` MJPEG live page | the built-in `/dash` fleet dashboard |
 
 ## Quickstart
 
@@ -168,6 +186,8 @@ Operations:
 - [docs/troubleshooting.md](docs/troubleshooting.md) — 503 overloaded,
   boot failures, parked-sim semantics, quarantine, and friends.
 
+The physical fleet this runs on (machines, locks, build caching) is
+site-specific; [docs/fleet.md](docs/fleet.md) covers the daemon's part.
 
 ## Status
 

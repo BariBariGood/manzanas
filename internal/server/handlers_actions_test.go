@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
@@ -267,5 +268,12 @@ func TestActionRequiresKind(t *testing.T) {
 	resp := doJSON(t, "POST", ts.URL+"/v0/actions", proto.ActionRequest{LeaseID: l.ID}, &e)
 	if resp.StatusCode != 400 || e.Code != proto.ErrBadRequest {
 		t.Fatalf("got %d %q", resp.StatusCode, e.Code)
+	}
+	// The message must hint at the request envelope so a caller who sent
+	// e.g. {"type": "tap"} can self-correct without reading the source.
+	for _, want := range []string{"lease_id", "kind", "payload"} {
+		if !strings.Contains(e.Message, want) {
+			t.Fatalf("kind-required message %q must mention %q", e.Message, want)
+		}
 	}
 }

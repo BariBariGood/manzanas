@@ -28,6 +28,16 @@ func findByLabel(nodes []*Node, label string) *Node {
 	return nil
 }
 
+func TestWDAViewport(t *testing.T) {
+	vp := wdaViewport(sampleWDAXML)
+	if vp == nil || vp.W != 393 || vp.H != 852 {
+		t.Fatalf("wdaViewport = %+v, want 393x852", vp)
+	}
+	if vp := wdaViewport("not xml"); vp != nil {
+		t.Fatalf("wdaViewport on garbage = %+v, want nil", vp)
+	}
+}
+
 func TestCompactWDATree(t *testing.T) {
 	nodes, err := CompactWDATree(sampleWDAXML)
 	if err != nil {

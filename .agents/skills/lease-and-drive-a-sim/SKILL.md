@@ -21,10 +21,14 @@ else's sim). `reset:"erase"` guarantees the NEXT holder gets a clean target:
 
 ```sh
 L=$(curl -s -X POST $D/v0/leases -d '{
-  "labels":["iphone-air"], "agent_id":"<your-session-id>",
+  "labels":["iphone-air"], "agent_id":"<caller-identity>",
   "purpose":"<task>", "ttl_seconds":900, "reset":"erase"}')
 LID=$(echo "$L" | jq -r .id); UDID=$(echo "$L" | jq -r .target_udid)
 ```
+
+`agent_id` is the canonical caller-identity field (a session ID is a fine
+value for it); the API also accepts `session_id` as an alias that fills
+`agent_id` when it is empty. Omitting both is `400 bad_request`.
 
 - `201` + `state:"active"` → proceed. `202` + `state:"queued"` → poll
   `GET /v0/leases/$LID` until active (polling keeps your queue slot; queued
@@ -49,7 +53,10 @@ another host. Do NOT bypass with raw `simctl boot`.
 
 ## 3. Act — prefer composite + batch (fewer round trips)
 
-Single action: `POST /v0/actions` with `{"lease_id","kind","payload"}`.
+Single action: `POST /v0/actions` with the envelope
+`{"lease_id":"lse_…","kind":"tap_element","payload":{"label":"Continue"}}` —
+exactly those three top-level keys; per-kind fields go inside `payload`,
+and per-kind results come back inside `result` (see PROTOCOL.md §5).
 Batch (max 32, strictly ordered, 5-min budget):
 
 ```sh
@@ -81,6 +88,8 @@ curl -s -X POST $D/v0/actions -d "{\"lease_id\":\"$LID\",\"kind\":\"screenshot\"
   | jq -r .result.jpeg_base64 | base64 -d > shot.jpg
 ```
 
+The base64 image sits **inside the action result envelope** —
+`result.jpeg_base64` (or `result.png_base64` for PNG), never top-level.
 A full-res PNG is several MB; `jpeg`+`max_dim:800` is tens of KB. With the
 journal enabled, `inline:false` skips the base64 in the response — fetch the
 capture from the journal artifact instead (see journal-evidence-export skill).

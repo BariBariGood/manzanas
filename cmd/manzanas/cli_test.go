@@ -167,7 +167,8 @@ func TestScreenshotWritesFile(t *testing.T) {
 	f := newFakeDaemon()
 	defer f.Close()
 	out := filepath.Join(t.TempDir(), "shot.png")
-	if _, _, err := runCLI(t, f, false, "screenshot", "-o", out, "--lease", "lse_test"); err != nil {
+	stdout, stderr, err := runCLI(t, f, false, "screenshot", "-o", out, "--lease", "lse_test")
+	if err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(out)
@@ -176,6 +177,67 @@ func TestScreenshotWritesFile(t *testing.T) {
 	}
 	if len(data) == 0 || string(data[1:4]) != "PNG" {
 		t.Fatalf("not a PNG: %d bytes", len(data))
+	}
+	// Status goes to stderr so a piped stdout never carries stray text
+	// alongside binary/machine-readable output.
+	if stdout != "" {
+		t.Fatalf("stdout must stay empty with -o FILE, got %q", stdout)
+	}
+	if !strings.Contains(stderr, "wrote") {
+		t.Fatalf("status line missing from stderr: %q", stderr)
+	}
+}
+
+// -o - writes the raw image bytes to stdout, with status only on stderr:
+// `manzanas screenshot -o - > shot.png` must produce a valid PNG.
+func TestScreenshotToStdoutIsPureBinary(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	stdout, stderr, err := runCLI(t, f, false, "screenshot", "-o", "-", "--lease", "lse_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stdout) == 0 || stdout[1:4] != "PNG" {
+		t.Fatalf("stdout is not a bare PNG (first bytes %q)", stdout[:min(8, len(stdout))])
+	}
+	if !strings.Contains(stderr, "wrote") {
+		t.Fatalf("status line missing from stderr: %q", stderr)
+	}
+	// --json promises pure JSON on stdout, which -o - cannot honor: the
+	// combination is rejected during flag validation, before any action
+	// is dispatched (nothing for the daemon to capture or journal).
+	before := len(f.requests)
+	stdout, _, err = runCLI(t, f, true, "screenshot", "-o", "-", "--lease", "lse_test")
+	if err == nil || !strings.Contains(err.Error(), "--json") {
+		t.Fatalf("--json with -o - must be rejected, got err=%v stdout=%q", err, stdout)
+	}
+	if stdout != "" {
+		t.Fatalf("rejected --json -o - must not write to stdout: %q", stdout)
+	}
+	if got := len(f.requests); got != before {
+		t.Fatalf("rejection must happen before dispatch: daemon saw %d new request(s)", got-before)
+	}
+}
+
+// --json with -o FILE keeps the machine-readable summary on stdout (no
+// binary there to corrupt) and nothing else mixed in.
+func TestScreenshotJSONSummaryOnStdout(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	out := filepath.Join(t.TempDir(), "shot.png")
+	stdout, _, err := runCLI(t, f, true, "screenshot", "-o", out, "--lease", "lse_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary struct {
+		File  string `json:"file"`
+		Bytes int    `json:"bytes"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &summary); err != nil {
+		t.Fatalf("--json stdout not JSON: %v (%q)", err, stdout)
+	}
+	if summary.File != out || summary.Bytes == 0 {
+		t.Fatalf("summary = %+v", summary)
 	}
 }
 

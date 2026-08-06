@@ -41,6 +41,20 @@ best-effort and time-bounded). The `wait_for_element` / `wait_tree_stable`
 actions run their per-poll a11y reads through the resident helper too,
 falling back to a cold poll on transport failure.
 
+A `refresh: true` payload on `observe`, `wait_for_element`,
+`wait_tree_stable`, `tap_element`, or `type_into_element` opts the a11y
+reads out of the resident helper: the observe (or every poll) runs on a
+freshly spawned AXe process instead. The helper's long-lived
+FBSimulatorControl accessibility connection can occasionally serve a
+stale snapshot (a frontmost modal/sheet missing from the tree while the
+background screen still shows); a fresh process opens a fresh connection,
+which cannot. It costs the full cold spawn per read, so use it as an
+escape hatch when the tree looks stale, not as a default. The flag is
+additive and understood by the Go side only — older simbridge builds need
+no changes. It is best-effort: on a host with no AXe CLI (helper-only),
+or when no warm helper is configured (the cold path is always fresh),
+the flag is a no-op rather than an error.
+
 Everything else — `type` (AXe's text→HID keymap is nontrivial and typing
 is rare), `screenshot`, and the `simctl`-backed app lifecycle ops — stays
 on the cold path. The cold backend is untouched; the warm backend wraps

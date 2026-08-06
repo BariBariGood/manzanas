@@ -213,6 +213,7 @@ func (p *Pool) reapUnmanaged(ctx context.Context, udid string) bool {
 		p.log.Warn("janitor: stale-lock reap shutdown failed", "udid", udid, "err", err)
 		return false
 	}
+	p.reportShutdown(udid, "janitor", "unmanaged sim reaped: fleet lock stale or missing")
 	return true
 }
 

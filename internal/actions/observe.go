@@ -53,6 +53,12 @@ func handleObserve(ctx context.Context, b *AXeBackend, udid string, p map[string
 	if err != nil {
 		return nil, err
 	}
+	// refresh changes nothing on the cold path (each observe already
+	// spawns a fresh AXe process); it is validated here so a malformed
+	// value fails consistently whichever backend serves the observe.
+	if _, err := boolFlag(p, "refresh", false); err != nil {
+		return nil, err
+	}
 	raw, nodes, err := b.observeTree(ctx, udid)
 	if err != nil {
 		return nil, err
@@ -63,6 +69,13 @@ func handleObserve(ctx context.Context, b *AXeBackend, udid string, p map[string
 	res := map[string]any{
 		"tree": nodes,
 		"hash": TreeHash(nodes),
+	}
+	if len(nodes) == 0 {
+		// The tree stayed empty across the bounded in-daemon re-polls.
+		// That is either a legitimately element-free screen or a still-
+		// warming RN a11y bridge; the distinct detail lets callers treat
+		// it as retryable instead of trusting an empty snapshot.
+		res["detail"] = "empty_tree"
 	}
 	if includeRaw {
 		res["raw"] = string(raw)
@@ -369,6 +382,72 @@ func numOr(m map[string]any, def float64, keys ...string) float64 {
 		}
 	}
 	return def
+}
+
+// rawViewport extracts the device viewport from a raw describe-ui
+// document: the shallowest origin-anchored frame is the screen bounds.
+// The root AXApplication element carries no frame in real AXe output —
+// the screen rectangle sits on it or on a wrapper Group a level or two
+// below — so the search proceeds breadth-first and stops at the first
+// level with a candidate. Taking the shallowest (not the largest) keeps
+// an over-tall (0,0)-anchored scroll content container deeper in the
+// tree from being mistaken for the screen. Ties among siblings go to the
+// largest. No candidate within a few levels yields nil (no viewport
+// check).
+func rawViewport(raw []byte) *Frame {
+	var root any
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return nil
+	}
+	level := flatMaps([]any{root})
+	for depth := 0; depth <= 2 && len(level) > 0; depth++ {
+		var best *Frame
+		for _, m := range level {
+			if f := viewportFrame(parseFrame(m)); f != nil {
+				if best == nil || f.W*f.H > best.W*best.H {
+					best = f
+				}
+			}
+		}
+		if best != nil {
+			return best
+		}
+		var next []any
+		for _, m := range level {
+			for _, key := range []string{"children", "AXChildren"} {
+				if ch, ok := m[key].([]any); ok {
+					next = append(next, ch...)
+				}
+			}
+		}
+		level = flatMaps(next)
+	}
+	return nil
+}
+
+// flatMaps flattens nested arrays into the maps they contain.
+func flatMaps(vs []any) []map[string]any {
+	var out []map[string]any
+	for _, v := range vs {
+		switch t := v.(type) {
+		case []any:
+			out = append(out, flatMaps(t)...)
+		case map[string]any:
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// viewportFrame validates a candidate viewport rectangle: the screen is
+// anchored at the origin with positive size.
+func viewportFrame(f *Frame) *Frame {
+	if f == nil || f.W <= 0 || f.H <= 0 || f.X != 0 || f.Y != 0 {
+		return nil
+	}
+	return f
 }
 
 // TreeHash is a stable content hash of a compacted tree, so callers can

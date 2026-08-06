@@ -20,6 +20,10 @@ func elemWaitFor(ctx context.Context, d elementDriver, udid string, p map[string
 		return nil, err
 	}
 	absent, _ := p["absent"].(bool)
+	refresh, err := boolFlag(p, "refresh", false)
+	if err != nil {
+		return nil, err
+	}
 	timeout, interval, err := waitParams(p, defaultWaitTimeout)
 	if err != nil {
 		return nil, err
@@ -27,11 +31,11 @@ func elemWaitFor(ctx context.Context, d elementDriver, udid string, p map[string
 
 	var found *Node
 	polls, elapsed, err := pollUntil(ctx, timeout, interval, func(ctx context.Context) error {
-		nodes, err := d.observeOnce(ctx, udid)
+		obs, err := d.observeOnce(ctx, udid, refresh)
 		if err != nil {
 			return err
 		}
-		hit := pr.find(nodes)
+		hit := pr.findBest(obs.nodes, obs.viewport)
 		if absent {
 			if hit != nil {
 				return errNotYet

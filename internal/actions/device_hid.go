@@ -138,11 +138,12 @@ func handleDeviceWaitTreeStable(ctx context.Context, b *DeviceBackend, udid stri
 // observeOnce implements elementDriver: one WDA source poll, compacted to
 // the shared Node tree. A WDA transport failure mid-lease (the tunnel
 // dropped, the runner is restarting) comes back as errNotYet so the wait
-// loops keep polling until their own budget runs out.
-func (b *DeviceBackend) observeOnce(ctx context.Context, udid string) ([]*Node, error) {
+// loops keep polling until their own budget runs out. Every WDA source
+// read is already an un-cached round trip, so refresh is a no-op here.
+func (b *DeviceBackend) observeOnce(ctx context.Context, udid string, _ bool) (observation, error) {
 	c, err := b.wdaFor(udid)
 	if err != nil {
-		return nil, err
+		return observation{}, err
 	}
 	src, err := c.Source(ctx)
 	if err != nil {
@@ -150,15 +151,15 @@ func (b *DeviceBackend) observeOnce(ctx context.Context, udid string) ([]*Node, 
 			if k := b.kick[udid]; k != nil {
 				k()
 			}
-			return nil, errNotYet
+			return observation{}, errNotYet
 		}
-		return nil, b.wdaFail(udid, "observe", err)
+		return observation{}, b.wdaFail(udid, "observe", err)
 	}
 	nodes, err := CompactWDATree(src)
 	if err != nil || len(nodes) == 0 {
-		return nil, errNotYet
+		return observation{}, errNotYet
 	}
-	return nodes, nil
+	return observation{nodes: nodes, viewport: wdaViewport(src)}, nil
 }
 
 // tapXY implements elementDriver via WDA.
@@ -173,8 +174,21 @@ func (b *DeviceBackend) tapXY(ctx context.Context, udid string, x, y float64) er
 	return nil
 }
 
+// validateTypeOpts implements typeOptsValidator: WDA already delivers the
+// text app-side in one shot (no per-keystroke hardware-keyboard events),
+// so the paste strategy is simulator-only and rejected here.
+func (b *DeviceBackend) validateTypeOpts(opts typeOpts) error {
+	if opts.strategy == typeStrategyPaste {
+		return notImplemented("the %q typing strategy is simulator-only; WDA typing on devices already avoids per-keystroke hardware-keyboard events", typeStrategyPaste)
+	}
+	return nil
+}
+
 // typeInto implements elementDriver via WDA.
-func (b *DeviceBackend) typeInto(ctx context.Context, udid, text string) (int, error) {
+func (b *DeviceBackend) typeInto(ctx context.Context, udid, text string, opts typeOpts) (int, error) {
+	if err := b.validateTypeOpts(opts); err != nil {
+		return 0, err
+	}
 	c, err := b.wdaFor(udid)
 	if err != nil {
 		return 0, err

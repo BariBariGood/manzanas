@@ -184,6 +184,14 @@ func (p *Pool) sweepFootprints(ctx context.Context, capKB int64, leased LeasedFu
 					}
 					var err error
 					defer func() { release(err == nil) }()
+					// Runs before the release above (LIFO): a successful
+					// rebuild erased the sim, so clear its dirty mark
+					// before the hold is dropped.
+					defer func() {
+						if err == nil {
+							p.notifyClean(udid)
+						}
+					}()
 					defer p.BeginTransition(udid)()
 					octx, cancel := context.WithTimeout(ctx, watchdogOpTimeout)
 					defer cancel()

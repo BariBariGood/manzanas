@@ -87,6 +87,12 @@ manzanas screenshot --lease lse_... -o shot.png
 open shot.png
 ```
 
+The status line goes to stderr, so stdout stays clean for piping; `-o -`
+writes the raw image bytes to stdout instead of a file
+(`manzanas screenshot --lease lse_... -o - > shot.png`). Over the raw
+HTTP API the image comes back base64 inside the action result envelope
+as `result.png_base64` (see [proto/PROTOCOL.md](../proto/PROTOCOL.md) §5).
+
 ## 6. Release
 
 ```sh

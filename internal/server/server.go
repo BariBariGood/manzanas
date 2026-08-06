@@ -4,11 +4,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -25,6 +28,19 @@ import (
 // resetTimeout bounds a post-lease auto-reset (shutdown + erase or
 // data-dir swap of a multi-GB device directory).
 const resetTimeout = 10 * time.Minute
+
+// redactLeaseID maps a lease ID to a short one-way digest for the
+// shutdown ledger and its sinks (logs, journal, client-visible detail):
+// lease IDs are v0 capability tokens, so no part of the raw ID may leak,
+// but the holder of an ID can compute the same digest to correlate a
+// shutdown record with their lease. Mirrors the broker's redaction.
+func redactLeaseID(id string) string {
+	if id == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(id))
+	return "sha:" + hex.EncodeToString(sum[:4])
+}
 
 // Server serves the manzanasd v0 protocol.
 type Server struct {
@@ -61,6 +77,27 @@ type Server struct {
 	// (/v0/dash/...); see SetDashReadonly.
 	dashReadonly bool
 
+	// bootWaitPoll overrides the boot-wait retry interval (tests);
+	// 0 means defaultBootWaitPoll.
+	bootWaitPoll time.Duration
+	// bootWaitSlots caps concurrent ?wait=true boot waits (maxBootWaiters).
+	bootWaitSlots chan struct{}
+	// bootGates is a cheap boot-gate pre-check (no full target listing)
+	// the boot-wait retry loop probes before each full boot attempt so
+	// waiting stays cheap on an overloaded host; nil = no pre-check.
+	bootGates func(udid string) error
+	// waitMu guards waitByLease, the set of lease IDs with a boot wait
+	// in flight: one concurrent wait per lease, so a single holder can't
+	// pin every waiter slot with repeated ?wait=true requests.
+	waitMu      sync.Mutex
+	waitByLease map[string]bool
+
+	// downMu guards lastShutdown, the per-target record of the most
+	// recent daemon-driven shutdown (who and why). Action errors against
+	// a not-booted leased target surface it (see targetDownDetail).
+	downMu       sync.Mutex
+	lastShutdown map[string]shutdownNote
+
 	// openMu serializes run open/close transitions so the journal's
 	// GC-exempt flag always converges to the lease's current state (see
 	// syncRunOpen).
@@ -73,7 +110,72 @@ func New(reg registry.Registry, leases *lease.Manager, log *slog.Logger) *Server
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{reg: reg, leases: leases, log: log, events: newEventHub()}
+	return &Server{reg: reg, leases: leases, log: log, events: newEventHub(),
+		lastShutdown:  make(map[string]shutdownNote),
+		bootWaitSlots: make(chan struct{}, maxBootWaiters),
+		waitByLease:   make(map[string]bool)}
+}
+
+// shutdownNote records one daemon-driven target shutdown for later
+// surfacing (actor is who decided, e.g. "janitor", "watchdog", "agent
+// <id>"; reason is why).
+type shutdownNote struct {
+	Actor  string
+	Reason string
+	At     time.Time
+}
+
+// NoteShutdown records that the daemon (or one of its subsystems) shut a
+// target down, so a later target_not_booted error can tell the leaseholder
+// who did it and why. When the target is held by an active lease the
+// shutdown is also journaled into that lease's run.
+func (s *Server) NoteShutdown(udid, actor, reason string) {
+	if udid == "" {
+		return
+	}
+	now := time.Now().UTC()
+	s.downMu.Lock()
+	s.lastShutdown[udid] = shutdownNote{Actor: actor, Reason: reason, At: now}
+	s.downMu.Unlock()
+	s.log.Info("target shutdown noted", "udid", udid, "actor", actor, "reason", reason)
+	if s.leases == nil {
+		return
+	}
+	if l, ok := s.leases.Active(udid); ok {
+		s.record(context.Background(), journal.Event{
+			Kind: "target", LeaseID: l.ID, AgentID: l.AgentID,
+			Action: "target.shutdown", Status: "ok",
+			Extra: map[string]any{"udid": udid, "actor": actor, "reason": reason},
+		})
+	}
+}
+
+// clearShutdownNote drops a target's shutdown ledger entry (called on a
+// successful boot: the shutdown it recorded has been undone, so a later
+// not-booted error must not report it as the cause).
+func (s *Server) clearShutdownNote(udid string) {
+	s.downMu.Lock()
+	delete(s.lastShutdown, udid)
+	s.downMu.Unlock()
+}
+
+// NoteBoot invalidates a target's shutdown ledger entry: the daemon has
+// observed the target reach Booted, so the recorded shutdown was undone.
+// The warm pool wires it as its boot reporter — pool boots (rePark after
+// a post-lease reset, Recycle rebuilds, BootAsync) never pass through the
+// server's own boot handler.
+func (s *Server) NoteBoot(udid string) { s.clearShutdownNote(udid) }
+
+// targetDownDetail explains why a target is not booted, from the daemon's
+// shutdown ledger. Always returns a non-empty, actionable sentence.
+func (s *Server) targetDownDetail(udid string) string {
+	s.downMu.Lock()
+	n, ok := s.lastShutdown[udid]
+	s.downMu.Unlock()
+	if !ok {
+		return "the daemon has no record of shutting this target down; it was shut down externally (simctl, a crash, or before the daemon started)"
+	}
+	return "target was shut down by " + n.Actor + " at " + n.At.Format(time.RFC3339) + ": " + n.Reason
 }
 
 // SetLeases wires the lease manager; must be called before Handler serves
@@ -83,6 +185,12 @@ func (s *Server) SetLeases(m *lease.Manager) { s.leases = m }
 // SetParkedCheck wires the warm pool's parked query; may stay nil when
 // there is no pool.
 func (s *Server) SetParkedCheck(fn func(udid string) bool) { s.parked = fn }
+
+// SetBootGates wires a cheap boot-gate pre-check (e.g. the warm pool's
+// cached-count gate) that the ?wait=true retry loop probes before each
+// full boot attempt, so a waiting client doesn't force a full simctl
+// listing per poll on an already-overloaded host.
+func (s *Server) SetBootGates(fn func(udid string) error) { s.bootGates = fn }
 
 // SetLeaseEndHook wires a callback fired after an explicit lease release
 // (expired leases reach the pool through the lease manager's event sink);
@@ -148,6 +256,9 @@ func (s *Server) ResetSink() func(proto.Lease) error {
 				return gerr
 			}
 		}
+		// The reset shuts the sim down; ledger it so a holder poking a
+		// mid-reset (or freshly reset) target gets an actionable detail.
+		s.NoteShutdown(l.TargetUDID, "daemon", "auto-reset ("+l.Reset+") for lease "+redactLeaseID(l.ID))
 		err := s.state.Reset(ctx, l.TargetUDID, l.Reset)
 		params := map[string]any{"udid": l.TargetUDID, "reset": l.Reset}
 		defer func() { s.recordState(ctx, l.ID, "state.reset", params, err) }()
@@ -234,7 +345,12 @@ func (s *Server) startRun(ctx context.Context, l proto.Lease) {
 func (s *Server) EventSink() func(proto.Lease) {
 	return func(l proto.Lease) {
 		event := proto.EventLeaseExpired
-		if l.State == proto.LeaseActive {
+		switch {
+		case l.State == proto.LeaseActive && l.GraceUntil != nil:
+			// Still active, past nominal expiry: a one-shot warning that
+			// the renewal grace window is open.
+			event = proto.EventLeaseExpiring
+		case l.State == proto.LeaseActive:
 			event = proto.EventLeaseGranted
 		}
 		// The lease entry is appended synchronously (a local file append)
@@ -248,8 +364,11 @@ func (s *Server) EventSink() func(proto.Lease) {
 			// payload's `action` key documents method names, not WS event
 			// names); the raw event name rides along for stream consumers.
 			action := "leases.grant"
-			if event == proto.EventLeaseExpired {
+			switch event {
+			case proto.EventLeaseExpired:
 				action = "leases.expire"
+			case proto.EventLeaseExpiring:
+				action = "leases.expiring"
 			}
 			// The run is open (GC-exempt) for exactly the lease's lifetime:
 			// reconciled at grant (here and in the acquire handlers) and at
@@ -378,6 +497,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, proto.Error{Code: code, Message: msg})
+}
+
+// writeWireError writes a full proto.Error (detail, retry hint included),
+// mirroring RetryAfterSeconds in the standard Retry-After header.
+func writeWireError(w http.ResponseWriter, status int, e *proto.Error) {
+	if e.RetryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(e.RetryAfterSeconds))
+	}
+	writeJSON(w, status, e)
 }
 
 // maxJSONBodyBytes bounds a JSON request body (1 MiB); journal entries

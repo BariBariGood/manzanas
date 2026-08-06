@@ -26,6 +26,10 @@ func actionStatus(code string) int {
 		return http.StatusConflict
 	case proto.ErrTimeout:
 		return http.StatusRequestTimeout
+	case proto.ErrOffViewport:
+		return http.StatusConflict
+	case proto.ErrFocusRequired:
+		return http.StatusPreconditionFailed
 	case proto.ErrNotImplemented:
 		return http.StatusNotImplemented
 	default:
@@ -41,7 +45,7 @@ func (s *Server) dispatchAction(ctx context.Context, req proto.ActionRequest) (p
 			Message: "actions is not implemented in this build"}
 	}
 	if req.Kind == "" {
-		return proto.ActionResult{}, &proto.Error{Code: proto.ErrBadRequest, Message: "kind is required"}
+		return proto.ActionResult{}, &proto.Error{Code: proto.ErrBadRequest, Message: `kind is required (action requests are {"lease_id","kind","payload"}; see proto/PROTOCOL.md §5)`}
 	}
 	l, err := s.leases.Get(req.LeaseID)
 	if err != nil {
@@ -59,9 +63,18 @@ func (s *Server) dispatchAction(ctx context.Context, req proto.ActionRequest) (p
 		Params: req.Payload, Status: "ok",
 	}
 	if err != nil {
+		wireErr := actions.WireError(err)
+		if wireErr.Code == proto.ErrTargetNotBooted {
+			// A leased target that is not booted is a lifecycle anomaly:
+			// tell the holder who shut it down and why (or that the
+			// daemon didn't), so it can journal/recover instead of
+			// guessing. See PROTOCOL.md §1 (error detail).
+			wireErr.Detail = s.targetDownDetail(l.TargetUDID)
+			ev.Extra = map[string]any{"udid": l.TargetUDID, "detail": wireErr.Detail}
+		}
 		ev.Status, ev.Error = "error", err.Error()
 		s.journal.Record(ctx, ev)
-		return proto.ActionResult{}, actions.WireError(err)
+		return proto.ActionResult{}, wireErr
 	}
 	// Lift the backend's a11y evidence into the journal entry: explicit
 	// before/after hashes (opt-in around HID actions), or the tree hash an
@@ -183,7 +196,7 @@ func (s *Server) handleActionBatch(w http.ResponseWriter, r *http.Request) {
 		if wireErr.Code == proto.ErrNotImplemented {
 			status = http.StatusNotImplemented
 		}
-		writeError(w, status, wireErr.Code, wireErr.Message)
+		writeWireError(w, status, wireErr)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -203,7 +216,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		case proto.ErrLeaseExpired:
 			status = http.StatusGone
 		}
-		writeError(w, status, wireErr.Code, wireErr.Message)
+		writeWireError(w, status, wireErr)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)

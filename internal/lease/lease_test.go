@@ -125,6 +125,7 @@ func TestRenewExtendsExpiry(t *testing.T) {
 
 func TestExpiryPromotesQueued(t *testing.T) {
 	m := newTestManager(t)
+	m.SetRenewGrace(0) // exercise hard expiry, not the grace window
 	ctx := context.Background()
 	now := time.Now()
 	m.now = func() time.Time { return now }
@@ -153,6 +154,7 @@ func TestExpiryPromotesQueued(t *testing.T) {
 
 func TestRenewExpiredFails(t *testing.T) {
 	m := newTestManager(t)
+	m.SetRenewGrace(0) // exercise hard expiry, not the grace window
 	ctx := context.Background()
 	now := time.Now()
 	m.now = func() time.Time { return now }

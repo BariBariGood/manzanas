@@ -21,7 +21,15 @@ truth; this document describes semantics.
   `{"code": "...", "message": "..."}`. Well-known codes: `not_found`,
   `not_implemented`, `bad_request`, `lease_expired`, `no_match`,
   `target_busy`, `target_not_booted`, `stream_limit`, `viewer_limit`,
-  `stream_gone`, `timeout`, `internal`.
+  `stream_gone`, `timeout`, `off_viewport`, `focus_required` (`412` — a
+  typing action with `require_focus:true` found no focused text field),
+  `internal`. Two additive
+  optional fields: `detail` carries actionable context when the daemon
+  has any (e.g. a `target_not_booted` error against a leased target
+  reports who shut the target down and why, or that the daemon has no
+  record of doing so), and `retry_after_seconds` is a machine-readable
+  retry hint on transient refusals (`overloaded`), mirrored in an HTTP
+  `Retry-After` header.
 - Timestamps are RFC 3339 UTC.
 - `GET /v0/healthz` returns `200 {"ok":true,"version":"v0"}`.
 - `GET /v0/status` returns the daemon's load/occupancy snapshot for fleet
@@ -89,7 +97,18 @@ On real (darwin, non-mock) daemons every boot passes host safety gates
 before it is accepted: a running-sim cap (capacity class: 2 on Intel,
 4 on Apple Silicon; parked pool sims don't count), a load gate (refuse
 when 1-min load > 2× cores) and a free-disk gate (refuse below 5 GiB).
-A gate refusal answers `503 {"code":"overloaded"}` — back off and retry.
+A gate refusal answers `503 {"code":"overloaded"}` with a `Retry-After`
+header and a matching `retry_after_seconds` field in the body — wait at
+least that long before retrying instead of busy-polling. Alternatively,
+boot with `?wait=true` (`POST /v0/targets/{udid}/boot?wait=true`): the
+daemon then retries a gate-refused boot server-side (polling every few
+seconds, up to a 10-minute budget) and answers `202 {Target}` once the
+boot is accepted; if the budget (or the request context) runs out first,
+the last refusal is returned as the usual hinted `503`. The lease is
+re-validated on every retry — if it expires or loses the target while
+waiting, the wait aborts with `410 lease_expired`. Concurrent waiters
+are capped per daemon *and* per lease (one wait per lease at a time);
+excess `?wait=true` requests get the hinted `503` immediately.
 A boot request may also surface `500` with the failure of a *previous*
 accepted boot that later died in the background; retrying proceeds
 normally. The gates are tunable on the daemon via `--pool-max-running`,
@@ -155,7 +174,12 @@ operation on a target requires an active lease.
 
 - `POST /v0/leases` body `AcquireLeaseRequest`
   (`labels`, `udid?`, `agent_id`, `purpose?`, `ttl_seconds?` — default 300,
-  max 3600). `udid` pins the request to that specific target: only that
+  max 3600). `agent_id` identifies the caller and is required;
+  `session_id` is accepted as an alias (it fills `agent_id` when that
+  field is empty; `agent_id` wins when both are set, and the `Lease`
+  always echoes the resolved value as `agent_id`). A request with
+  neither field is `400 {"code":"bad_request"}`.
+  `udid` pins the request to that specific target: only that
   target can satisfy the lease, and it must also match `labels` (if any).
   The pin is echoed back on the `Lease` as `requested_udid`.
   - If a matching target is free → `201 {Lease}` with `state:"active"`,
@@ -177,6 +201,9 @@ operation on a target requires an active lease.
 - `GET /v0/leases/{id}` → `200 {Lease}`
 - `POST /v0/leases/{id}/renew` body `RenewLeaseRequest` → `200 {Lease}`
   (only active leases can renew; expired → `410 {"code":"lease_expired"}`).
+  Renewal is allowed through the grace window (below): a renew that
+  arrives after nominal `expires_at` but before `grace_until` succeeds,
+  clears `grace_until`, and re-arms the lease with the new TTL.
 - `DELETE /v0/leases/{id}` → `200 {Lease}` with `state:"released"`.
   Releasing (or expiry) hands the target to the head of the matching queue.
   Release is idempotent: for a lease already in a terminal state
@@ -188,8 +215,20 @@ A `Lease` served by a federating broker additionally carries `host` and
 target-bound ops (boot, actions, streams, state) against `host_addr`
 directly. See [docs/broker.md](../docs/broker.md).
 
-Expiry: the lease manager expires leases whose `expires_at` has passed;
-holders should renew at ~half TTL. Queued leases also expire if their owner
+Expiry and the renewal grace window: when an active lease passes its
+nominal `expires_at`, it does **not** expire immediately. It first enters
+a grace window (daemon-configurable via `--lease-renew-grace` /
+`MANZANASD_LEASE_RENEW_GRACE`, default 2 minutes; 0 disables): the lease
+stays `active`, the additive `grace_until` field is stamped on it, a
+`lease.expiring` WS event fires once, and the post-lease reset/reclaim
+and any queue promotion are deferred. Renewing during the window rescues
+the lease as if it had never lapsed. Only when `grace_until` passes
+without a renewal does the lease actually expire (state `expired`,
+`lease.expired` event, reset runs, queue head promoted). Read endpoints
+additionally stamp `expires_in_seconds` (derived, additive) on active
+leases — negative inside the grace window. Holders should still renew at
+~half TTL and treat the grace window as a last-chance safety net, not a
+TTL extension. Queued leases also expire if their owner
 does not poll `GET /v0/leases/{id}` (or WS `leases.get`) for 30 minutes, so
 abandoned requests don't block the queue; watching events alone does not
 keep a queued lease alive.
@@ -207,8 +246,9 @@ keep a queued lease alive.
 Methods mirror REST 1:1: `targets.list`, `targets.boot`, `targets.shutdown`,
 `leases.acquire`, `leases.get`, `leases.renew`, `leases.release`,
 `actions.dispatch`, `actions.batch`, `streams.open`. Params/results are the
-same JSON bodies as REST. Events: `lease.granted`, `lease.expired`,
-`target.state`.
+same JSON bodies as REST. Events: `lease.granted`, `lease.expiring`
+(an active lease entered its renewal grace window — renew now or it
+expires for real at `grace_until`), `lease.expired`, `target.state`.
 
 Action dispatch (`actions.dispatch` / `actions.batch`) is handled off the
 connection's read loop, so a long-running action (e.g. a `wait_*` poll)
@@ -223,9 +263,43 @@ response before, e.g., releasing the lease it runs under.
 
 ## 5. Action dispatch (owned by the actions slice)
 
-- `POST /v0/actions` body `ActionRequest`
-  (`lease_id`, `kind`, `payload` — payload is **opaque** to the core; its
-  schema is owned by `internal/actions`). → `200 {ActionResult}`.
+Every action goes through one request envelope: `POST /v0/actions` body
+`ActionRequest` with exactly these top-level fields —
+
+- `lease_id` — the active lease whose target the action runs on;
+- `kind` — the action name (e.g. `tap`, `tap_element`, `screenshot`;
+  see the tables in §5.1);
+- `payload` — a JSON object with the per-kind fields from those tables.
+  The payload is **opaque** to the core; its schema is owned by
+  `internal/actions`.
+
+The response is `200 {ActionResult}`: `{"ok": bool, "result": {...},
+"journal_ref"?: {...}}` — the per-kind result fields in the §5.1 tables
+live **inside `result`**, never at the top level.
+
+Worked example — tap the element labelled "Continue", then capture a
+small JPEG screenshot:
+
+```sh
+curl -s -X POST http://127.0.0.1:7433/v0/actions -d '{
+  "lease_id": "lse_abc123",
+  "kind": "tap_element",
+  "payload": {"label": "Continue", "timeout_ms": 10000}
+}'
+# → {"ok":true,"result":{"element":{...},"x":215,"y":640,"elapsed_ms":312,"polls":1},
+#    "journal_ref":{"run_id":"lse_abc123","seq":4}}
+
+curl -s -X POST http://127.0.0.1:7433/v0/actions -d '{
+  "lease_id": "lse_abc123",
+  "kind": "screenshot",
+  "payload": {"format": "jpeg", "max_dim": 800}
+}' | jq -r .result.jpeg_base64 | base64 -d > shot.jpg
+# the image is result.jpeg_base64 (result.png_base64 for PNG) — inside
+# `result`, not top-level
+```
+
+Other rules:
+
 - The target is the one held by `lease_id`; there is no separate `udid`
   field. A missing/unknown lease is `404 not_found`, a non-active lease is
   `410 lease_expired`. Terminal (released/expired) leases stay resolvable
@@ -237,7 +311,10 @@ response before, e.g., releasing the lease it runs under.
   `503 unavailable` (a required host tool such as AXe is not installed,
   or the a11y bridge stayed unready through the retry budget — retry
   later), `409 target_not_booted` (the leased target is shut down; boot
-  it first), or `500 internal` (the underlying command failed).
+  it first — the error's `detail` field reports the daemon's record of
+  who shut the target down and why, or that it has no such record and
+  the shutdown was external), or `500 internal` (the underlying command
+  failed).
 - Optional boolean payload fields (`include_raw`, `inline`,
   `terminate_running`, `ax_hashes`) must be JSON booleans; other types
   are `400 bad_request`, never silently coerced.
@@ -283,20 +360,66 @@ HID (AXe):
 |---|---|---|
 | `tap` | `x`, `y` (>= 0) | `x`, `y` |
 | `swipe` | `start_x`, `start_y`, `end_x`, `end_y` (>= 0), `duration_seconds?` | echoes the path |
-| `type` | `text` (chars AXe can map to HID keycodes; an unmappable char such as `\t` is `400 bad_request`, and any prefix before it may already have been typed) | `typed_runes` |
+| `type` | `text` (chars AXe can map to HID keycodes; an unmappable char such as `\t` is `400 bad_request`, and any prefix before it may already have been typed), `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `typed_runes`, `strategy?` (echoed when `paste`) |
 | `button` | `name` ∈ `home`, `lock`, `side-button`, `siri`, `apple-pay` | `button` |
 | `key` | `keycode` (HID usage code; integer in `[0, 2^32-1]`, else `400 bad_request`), `duration_seconds?` | `keycode` |
 | `key_sequence` | `keycodes` (array; each an integer in `[0, 2^32-1]`, else `400 bad_request`) | `count` |
-| `tap_element` | predicate (`label?`, `role?`, `value?`, `id?`, `exact?`, `in_frame?`), `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node, no children), `x`, `y` (tapped centre), `elapsed_ms`, `polls` |
-| `type_into_element` | same predicate/timing fields plus `text` | `tap_element`'s fields plus `typed_runes` |
+| `tap_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `anchor?` (`start` \| `center` (default) \| `end`), `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node, no children), `x`, `y` (tapped point), `elapsed_ms`, `polls` |
+| `type_into_element` | same predicate/timing/anchor fields plus `text`, `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `tap_element`'s fields plus `typed_runes`, `strategy?` (echoed when `paste`) |
 
 `tap_element` and `type_into_element` are composite actions: the server
-observes the a11y tree, finds the first element matching the predicate
-(same semantics as `wait_for_element`, including polling until the element
-appears within `timeout_ms`), and taps its frame centre —
+observes the a11y tree, finds the best element matching the predicate
+(same semantics and ranking as `wait_for_element`, including polling until
+the element appears within `timeout_ms`), and taps it —
 `type_into_element` then types `text` into the focused field — all in one
 request, saving the caller a full observe round-trip per interaction. A
 predicate that never matches is `408 timeout`.
+
+The tap lands on the element's frame centre by default. `anchor: "start"`
+or `"end"` moves it to a point inset half the frame height from the
+leading/trailing edge instead — for a text element whose label is longer
+than the interesting part (an inline "Sign in" link at the end of a
+sentence), the edge anchors land on the matched text instead of the middle
+of the sentence.
+
+A tap point outside the device viewport (the root a11y element's screen
+bounds) is `409 off_viewport` instead of a silently ineffective tap;
+scroll the element into view and retry. A match that is only transiently
+off screen (a sheet still animating in) keeps the wait polling within
+`timeout_ms`; `off_viewport` surfaces only when the budget expires with
+no on-screen match. `refresh: true` forces every poll
+to bypass the resident warm helper and observe cold (see `observe`).
+
+Typing strategies (`type` and `type_into_element`):
+
+- `strategy: "hid"` (default) synthesizes one hardware-keyboard event per
+  rune — the historical behavior.
+- `strategy: "paste"` copies `text` onto the simulator pasteboard
+  (`simctl pbcopy`) and sends a single Cmd-V chord instead of
+  per-keystroke events. Use it for long text, text with characters that
+  have no HID keycode, and on slimmed sims: on iOS 26.5 a sim slimmed
+  without the speech daemons (`com.apple.assistantd`,
+  `com.apple.corespeechd`) wedges the frontmost app's **main thread** in
+  `AFDictationConnection` after hardware-keyboard typing — paste avoids
+  that path entirely. Tradeoffs: the simulator pasteboard is
+  overwritten, per-keystroke handlers fire once for the whole text, and
+  the focused field must accept paste. The chord runs through the warm
+  helper's `key_combo` op when resident, else `axe key-combo` (AXe
+  releases predating `key-combo` are reported as `503 unavailable` with
+  an upgrade hint). Simulator-only: on devices (WDA already delivers
+  text app-side without hardware-keyboard events) `strategy:"paste"` is
+  `501 not_implemented`.
+
+`require_focus: true` makes the typing action verify — before sending any
+keystroke — that a text field actually has keyboard focus, by polling the
+a11y tree (bounded, ~10 s — sized to cover several cold AXe observes) for
+on-screen keyboard elements (`Key` /
+`Keyboard` roles). When no keyboard appears the action fails with
+`412 focus_required` instead of typing, so stray keys cannot land outside
+a field (e.g. a stray `r` reaching Metro reloads a React Native app).
+For `type_into_element` the check runs after the focusing tap. Default
+`false` because a simulator with *Connect Hardware Keyboard* active never
+shows the on-screen keyboard; opt in on headless QA sims.
 
 HID actions accept an optional `ax_hashes: true` payload flag: the backend
 then hashes the a11y tree before and after the action (one extra
@@ -308,7 +431,7 @@ Observation:
 
 | `kind` | payload | result |
 |---|---|---|
-| `observe` | `include_raw?` | `tree` (compacted a11y nodes), `hash`, `raw?` |
+| `observe` | `include_raw?`, `refresh?` | `tree` (compacted a11y nodes), `hash`, `raw?`, `detail?` (`"empty_tree"` when the tree is empty) |
 | `screenshot` | `inline?` (default true), `format?` (`png` default \| `jpeg`), `quality?` (JPEG only, 1–100, default 80), `max_dim?` (longer-edge pixel cap; the capture is downscaled server-side, aspect preserved) | `format`, `bytes`, `sha256`, `backend`, `png_base64?` / `jpeg_base64?` (key follows `format`) |
 
 `observe` runs `axe describe-ui` and compacts the result: each node carries
@@ -320,6 +443,21 @@ observations. Tap a listed element at its frame centre
 (`x + w/2`, `y + h/2`). The journal records `hash` as the entry's
 `ax_after`.
 
+`refresh: true` forces the snapshot to come from a freshly spawned AXe
+process instead of the resident warm helper, whose long-lived
+accessibility connection can occasionally serve a stale tree (e.g. a
+frontmost modal/sheet missing while the background screen still shows);
+it costs a process spawn per call and is a no-op when no warm helper is
+configured (the cold path is always fresh).
+
+An empty tree is retried inside the daemon (bounded, with backoff — the
+a11y bridge on React Native screens intermittently serves an empty
+snapshot while re-attaching). When it stays empty the result carries
+`detail: "empty_tree"` alongside `tree: []` so callers can distinguish a
+retryable blank snapshot from a settled screen and re-observe. The
+`wait_*` actions already treat an empty snapshot as "not yet": it neither
+matches a predicate nor counts as `absent:true` evidence — polling simply
+continues until the budget runs out.
 `screenshot` captures PNG natively; `format:"jpeg"` and/or `max_dim`
 re-encode/downscale on the daemon host before the bytes cross the wire
 (a full-resolution simulator PNG of several MB typically compresses to
@@ -337,16 +475,27 @@ Waiting (deterministic sync primitives; poll the same a11y pipeline as
 
 | `kind` | payload | result |
 |---|---|---|
-| `wait_for_element` | predicate (`label?`, `role?`, `value?`, `id?`, `exact?`, `in_frame?`), `absent?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls` |
+| `wait_for_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `absent?`, `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls` |
 | `wait_tree_stable` | `stable_samples?` (default 3, 2–20), `timeout_ms?` (default 15000, max 120000, doubles as the max wait), `interval_ms?` (default 500, min 10), `require_stable?` (default false) | `stable`, `hash`, `settled_ms`, `samples` |
 
-`wait_for_element` polls the compacted tree until an element matching the
-predicate appears (or, with `absent:true`, until no element matches). At
-least one predicate field is required. `role` and `id` always match
-exactly; `label` and `value` match by substring unless `exact:true`.
-`in_frame` (`{x,y,w,h}`) requires the element's frame centre to lie inside
-the rectangle. On success the matched element is returned with its `frame`
-so the caller can tap it directly.
+`wait_for_element` polls a fresh compacted tree each interval until an
+element matching the predicate appears (or, with `absent:true`, until no
+element matches). At least one predicate field is required. `role` and
+`id` always match exactly; `label`, `value`, and `placeholder` match by
+substring unless `exact:true` (or the equivalent `match: "exact"`;
+`match: "substring"` is the explicit default). `placeholder` matches the
+node's placeholder or its value, because an empty text field commonly
+surfaces its placeholder as the AX value (React Native `TextInput`s in
+particular expose empty labels and placeholder-as-value). `in_frame`
+(`{x,y,w,h}`) requires the element's frame centre to lie inside the
+rectangle. When several elements match, the best-ranked one wins: exact
+text matches beat substring hits, interactable elements (buttons, links,
+text fields, …) beat static text and containers, and the smallest frame
+wins among the rest — so a `Group` whose label concatenates its children,
+or description copy containing the requested word, loses to the actual
+control. On success the matched element is returned with its `frame` so
+the caller can tap it directly. `refresh: true` makes each poll bypass
+the resident warm helper (see `observe`).
 
 `wait_tree_stable` polls until the tree hash (the same digest `observe`
 returns) is identical for `stable_samples` consecutive polls — i.e.
@@ -553,6 +702,19 @@ consumed most of the reset window, so a reset can in the worst case run
 slightly past the 10-minute bound before quarantining. A sim whose slim
 state cannot be restored fails the reset and is quarantined rather than
 returned to the pool un-slimmed.
+
+Erase-on-grant: a `reset:"erase"` acquire is additionally guaranteed a
+clean target at grant time. If the matched target was left dirty by a
+previous holder whose own reset never ran (e.g. that lease carried
+`reset:"none"`), the grant is deferred — the request is answered
+`202 {"state":"queued"}` — while the daemon erases the target, and only
+promoted to `active` once the erase succeeds. A failed pre-grant erase
+quarantines the target like any failed reset. Clean free targets are
+preferred over dirty ones for erase-carrying requests, and targets
+already cleaned by a completed post-lease reset (or a quarantine-recovery
+rebuild, which always erases) are granted immediately without a
+redundant second erase. At most one pre-grant erase runs per queued
+lease at a time.
 
 ### 7.1 Golden images
 

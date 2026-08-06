@@ -38,3 +38,11 @@ func targetNotBooted(udid string) *Error {
 func timeoutErr(format string, a ...any) *Error {
 	return &Error{Code: "timeout", Message: fmt.Sprintf(format, a...)}
 }
+
+func offViewport(format string, a ...any) *Error {
+	return &Error{Code: "off_viewport", Message: fmt.Sprintf(format, a...)}
+}
+
+func focusRequired(format string, a ...any) *Error {
+	return &Error{Code: "focus_required", Message: fmt.Sprintf(format, a...)}
+}
