@@ -30,11 +30,13 @@ func elemWaitFor(ctx context.Context, d elementDriver, udid string, p map[string
 	}
 
 	var found *Node
+	var nodes []*Node
 	polls, elapsed, err := pollUntil(ctx, timeout, interval, func(ctx context.Context) error {
 		obs, err := d.observeOnce(ctx, udid, refresh)
 		if err != nil {
 			return err
 		}
+		nodes = obs.nodes
 		hit := pr.findBest(obs.nodes, obs.viewport)
 		if absent {
 			if hit != nil {
@@ -62,6 +64,7 @@ func elemWaitFor(ctx context.Context, d elementDriver, udid string, p map[string
 	res := map[string]any{
 		"elapsed_ms": elapsed.Milliseconds(),
 		"polls":      polls,
+		"hash":       TreeHash(nodes),
 	}
 	if absent {
 		res["absent"] = true

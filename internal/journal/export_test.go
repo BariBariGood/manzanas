@@ -2,11 +2,15 @@ package journal
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/BariBariGood/manzanas/proto"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -64,6 +68,61 @@ func TestExportMarkdownGolden(t *testing.T) {
 	}
 	if got != string(want) {
 		t.Fatalf("markdown mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestExportEmptyRun(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	runID := "lse_empty"
+	if err := s.WriteMeta(runID, RunMeta{
+		FormatVersion: FormatVersion, RunID: runID, AgentID: "agent-empty",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	md, err := s.ExportMarkdown(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"| Entries | 0 |", "| Result | ok |", "### Actions"} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("empty-run export missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "### Artifacts") {
+		t.Fatalf("empty-run export should have no artifacts section:\n%s", md)
+	}
+
+	// The JSON export must marshal entries as [], not null.
+	doc := BuildExport(runID, RunMeta{RunID: runID}, nil)
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"entries":[]`) {
+		t.Fatalf("nil entries not normalized: %s", b)
+	}
+}
+
+func TestBuildExportFailures(t *testing.T) {
+	entries := []Entry{
+		{Ref: proto.JournalRef{RunID: "r", Seq: 1},
+			Payload: map[string]any{"action": "targets.boot", "status": "ok"}},
+		{Ref: proto.JournalRef{RunID: "r", Seq: 2},
+			Payload: map[string]any{"action": "tap", "status": "error", "error": "boom"}},
+	}
+	doc := BuildExport("r", RunMeta{RunID: "r"}, entries)
+	if doc.Failures != 1 {
+		t.Fatalf("failures = %d, want 1", doc.Failures)
+	}
+	md := doc.Markdown()
+	for _, want := range []string{
+		"| Result | **FAILED** (1 of 2 steps errored) |",
+		"| **error** | boom |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("failure not highlighted, missing %q:\n%s", want, md)
+		}
 	}
 }
 

@@ -137,19 +137,32 @@ func newFakeDaemon() *fakeDaemon {
 		if fromSeq < 1 {
 			fromSeq = 1
 		}
+		payloads := []map[string]any{
+			{"kind": "tap", "action": "targets.boot", "status": "ok",
+				"params": map[string]any{"udid": "UDID-1"}},
+			{"kind": "tap", "action": "tap", "status": "error", "error": "element not found"},
+			{"kind": "tap", "action": "screenshot", "status": "ok",
+				"artifacts": []map[string]any{{"path": "artifacts/deadbeef.png",
+					"sha256": "deadbeef00112233445566778899aabb", "bytes": 128}}},
+		}
 		entries := []map[string]any{}
 		seq := fromSeq
 		for ; seq <= total && len(entries) < pageSize; seq++ {
 			entries = append(entries, map[string]any{
 				"ref":  map[string]any{"run_id": r.PathValue("run_id"), "seq": seq},
-				"kind": "action", "payload": map[string]any{"kind": "tap"},
+				"kind": "action", "payload": payloads[seq-1],
 			})
 		}
 		var nextSeq int64
 		if seq <= total {
 			nextSeq = seq
 		}
-		writeOK(w, map[string]any{"entries": entries, "next_seq": nextSeq})
+		writeOK(w, map[string]any{
+			"run_id": r.PathValue("run_id"),
+			"meta": map[string]any{"format_version": "journal/v0",
+				"run_id": r.PathValue("run_id"), "agent_id": "agent-fake",
+				"target_name": "iPhone 17 Pro", "target_udid": "UDID-1"},
+			"entries": entries, "next_seq": nextSeq})
 	})
 	mux.HandleFunc("POST /v0/journal/{run_id}/artifacts", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)

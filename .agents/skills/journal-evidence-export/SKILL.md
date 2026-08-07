@@ -13,12 +13,17 @@ answer `501` on all of these.
 ## The one-call PR evidence export
 
 ```sh
-curl -s $D/v0/journal/$LID/export.md > evidence.md
+manzanas journal export $LID -o evidence.md      # or: --format json
+curl -s $D/v0/journal/$LID/export.md > evidence.md   # same markdown, raw HTTP
 ```
 
 Returns a PR-comment-ready markdown summary: run metadata (agent, purpose,
-target, runtime), an ordered action table with status, and the artifact list.
-Paste it into the PR body or a comment.
+target, runtime), an ordered action table with failures highlighted, and
+the artifact list. Paste it into the PR body or a comment. Works after the
+lease is released. `--journal-dir ~/.manzanasd/journal` exports offline
+straight from the on-disk store (daemon stopped, or a copied run dir).
+MCP agents have the same export as the `journal_export` tool; the GitHub
+Action posts it automatically with `journal-evidence: "true"`.
 
 ## Inspect a run
 

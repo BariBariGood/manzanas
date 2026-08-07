@@ -18,6 +18,7 @@ jobs:
           labels: ios26,iphone-17-pro
           manzanas-version: v0.2.0    # pin an exact release tag
           comment-pr: "true"
+          journal-evidence: "true"
           run: |
             echo "holding lease $MANZANAS_LEASE on $MANZANAS_TARGET_UDID"
             curl -fsS -X POST "$MANZANASD_ADDR/v0/targets/$MANZANAS_TARGET_UDID/boot" \
@@ -54,3 +55,15 @@ the `artifact-name` input, e.g. for matrix jobs). Daemons that predate
 the actions slice return `501 not_implemented`; the step degrades
 gracefully. `comment-pr: true` posts a comment linking the run's artifact
 (needs `pull-requests: write`).
+
+## Journal evidence
+
+`journal-evidence: "true"` runs `manzanas journal export` on the lease's
+run after the script: the PR-ready markdown summary (step table with
+failures highlighted, artifact digests) is appended to the job step
+summary and exposed as the `evidence-path` output. With `comment-pr:
+"true"` it is also posted as a PR comment. Daemons running with the
+journal disabled degrade gracefully (the step logs a note and sets an
+empty path). See `docs/journal.md`, "Exporting PR evidence" — including
+the security posture: self-hosted runners must never run untrusted fork
+PR code, and daemons should stay tailnet-only or localhost.

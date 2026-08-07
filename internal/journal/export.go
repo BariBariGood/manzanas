@@ -6,6 +6,30 @@ import (
 	"strings"
 )
 
+// ExportDoc is the machine-readable run export (`journal export --format
+// json`): run metadata plus the full seq-ordered entry list.
+type ExportDoc struct {
+	RunID    string  `json:"run_id"`
+	Meta     RunMeta `json:"meta"`
+	Entries  []Entry `json:"entries"`
+	Failures int     `json:"failures"` // entries with status "error"
+}
+
+// BuildExport assembles an ExportDoc from a run's metadata and its full,
+// seq-ordered entry list (as returned by Read with no limit).
+func BuildExport(runID string, meta RunMeta, entries []Entry) ExportDoc {
+	if entries == nil {
+		entries = []Entry{}
+	}
+	failures := 0
+	for _, e := range entries {
+		if payloadString(e.Payload, "status") == "error" {
+			failures++
+		}
+	}
+	return ExportDoc{RunID: runID, Meta: meta, Entries: entries, Failures: failures}
+}
+
 // ExportMarkdown renders a PR-comment-ready evidence summary for a run: run
 // metadata, an action table, and the artifacts each step produced.
 func (s *FileStore) ExportMarkdown(ctx context.Context, runID string) (string, error) {
@@ -17,9 +41,16 @@ func (s *FileStore) ExportMarkdown(ctx context.Context, runID string) (string, e
 	if err != nil {
 		return "", err
 	}
+	return BuildExport(runID, meta, entries).Markdown(), nil
+}
 
+// Markdown renders the export as a PR-comment-ready summary: metadata
+// table, seq-ordered action table with failures highlighted, and the
+// artifacts each step produced.
+func (d ExportDoc) Markdown() string {
+	meta, entries := d.Meta, d.Entries
 	var b strings.Builder
-	fmt.Fprintf(&b, "## manzanasd run journal — `%s`\n\n", runID)
+	fmt.Fprintf(&b, "## manzanasd run journal — `%s`\n\n", d.RunID)
 	fmt.Fprintf(&b, "| | |\n|---|---|\n")
 	fmt.Fprintf(&b, "| Format | `%s` |\n", mdEscape(orDash(meta.FormatVersion)))
 	fmt.Fprintf(&b, "| Agent | %s |\n", mdEscape(orDash(meta.AgentID)))
@@ -31,6 +62,11 @@ func (s *FileStore) ExportMarkdown(ctx context.Context, runID string) (string, e
 		fmt.Fprintf(&b, "| Started | %s |\n", meta.CreatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	fmt.Fprintf(&b, "| Entries | %d |\n", len(entries))
+	if d.Failures > 0 {
+		fmt.Fprintf(&b, "| Result | **FAILED** (%d of %d steps errored) |\n", d.Failures, len(entries))
+	} else {
+		fmt.Fprintf(&b, "| Result | ok |\n")
+	}
 
 	b.WriteString("\n### Actions\n\n")
 	b.WriteString("| # | Time (UTC) | Kind | Action | Status | Detail |\n")
@@ -40,7 +76,10 @@ func (s *FileStore) ExportMarkdown(ctx context.Context, runID string) (string, e
 		p := e.Payload
 		ts := payloadTime(p)
 		action := payloadString(p, "action")
-		status := payloadString(p, "status")
+		status := mdEscape(payloadString(p, "status"))
+		if status == "error" {
+			status = "**error**"
+		}
 		// summarizeParams escapes its own pieces (it adds backticks that
 		// must survive), so only the raw error string is escaped here.
 		detail := mdEscape(payloadString(p, "error"))
@@ -48,7 +87,7 @@ func (s *FileStore) ExportMarkdown(ctx context.Context, runID string) (string, e
 			detail = summarizeParams(p)
 		}
 		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s | %s |\n",
-			e.Ref.Seq, ts, mdEscape(e.Kind), mdEscape(action), mdEscape(status), detail)
+			e.Ref.Seq, ts, mdEscape(e.Kind), mdEscape(action), status, detail)
 		artifacts = append(artifacts, artifactNames(p, e.Ref.Seq)...)
 	}
 
@@ -58,7 +97,7 @@ func (s *FileStore) ExportMarkdown(ctx context.Context, runID string) (string, e
 			fmt.Fprintf(&b, "- %s\n", a)
 		}
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 func orDash(s string) string {

@@ -1,6 +1,6 @@
 ---
 name: build-and-test
-description: Build, lint, and test manzanasd - the Go toolchain gate every PR must pass, the CI matrix (Linux + macOS), and how to build the simbridge helper. Use before opening any PR to this repo or when debugging CI failures.
+description: Build, lint, and test manzanasd - the Go toolchain gate every PR must pass, the CI matrix (Ubicloud Linux + self-hosted manzanasd-m3 macOS runner), and how to build the simbridge helper. Use before opening any PR to this repo or when debugging CI failures.
 ---
 
 # Build and test manzanasd
@@ -26,15 +26,21 @@ registry, httptest fake daemons); code that needs macOS is behind interfaces
 ## CI (.github/workflows/ci.yml)
 
 The test job runs the same four commands on a two-leg matrix:
-`ubuntu-latest` and `macos-latest`.
 
-Notes:
+- `ubicloud-standard-2` — Linux. **Org rule: always Ubicloud labels for
+  Linux jobs; GitHub-hosted runner billing is broken.**
+- `[self-hosted, macOS, ARM64, manzanasd-m3]` — the self-hosted runner on the
+  fleet M3. **Never switch macOS jobs to GitHub-hosted macOS.**
+
+manzanasd-m3 runner notes:
 
 - `setup-go` uses `go-version: "stable"`, NOT 1.22 — the Go 1.22 linker
   emits binaries without `LC_UUID`, which macOS 26 refuses to execute. Don't
   pin the version down.
-- Keep macOS-leg tests fast and never add steps that boot simulators or
-  need sudo there.
+- Actions cache is intentionally disabled on the m3 leg (it keeps its own
+  module/build cache on disk; uploading ~388 MB wastes 1-3 min/run).
+- The runner shares a maintainer's daily-driver M3: keep macOS-leg tests fast
+  and never add steps that boot simulators or need sudo there.
 
 Other workflows: `release.yml` (GoReleaser on `v*` tags), `site.yml`
 (`site/` npm build; only triggers on site changes).

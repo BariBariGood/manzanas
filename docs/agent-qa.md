@@ -160,6 +160,8 @@ Every lease, action, screenshot, and state op is journaled per run
 
 ```sh
 manzanas journal tail $MANZANAS_LEASE            # raw entries (--follow to live-tail)
+manzanas journal export $MANZANAS_LEASE -o evidence.md   # PR-ready markdown
+# equivalent over raw HTTP:
 curl -s "http://$MANZANASD_ADDR/v0/journal/$MANZANAS_LEASE/export.md" -o evidence.md
 ```
 

@@ -21,10 +21,24 @@ import (
 
 const protocolVersion = "2025-06-18"
 
+// serverInstructions is delivered to the client at initialize time; it is
+// the only guidance an LLM agent is guaranteed to see before calling tools.
+const serverInstructions = `Drive iOS simulators (and physical devices) on a remote Mac fleet through the manzanasd daemon.
+
+Workflow:
+1. Call "targets" to see available simulators/devices and their labels.
+2. Call "lease_acquire" with labels (e.g. ["ios26"]) to claim one; it boots a Shutdown target before returning (pass boot=false to skip). Save the returned lease_id — every other tool requires it. The lease expires after ttl_seconds (default 300); call "lease_renew" before expiry during long sessions. Leases acquired here are auto-released when this MCP session ends.
+3. Install and launch your app with "app" (install needs a .app path on the daemon host).
+4. PREFER the element tools to drive the UI: "ui_tree" to see the screen as a structured accessibility tree (with a stable tree hash), then "tap_element", "type_into_element", and "scroll_to_element" with label/role matchers, plus "wait_for_element"/"wait_tree_stable" instead of sleeping. Element actions return "ui_changed" (before/after tree-hash comparison) — when it is true, re-call ui_tree; there is no need for a screenshot just to detect change. ui_changed can be null when the daemon could not hash the tree in time (unknown — call ui_tree to confirm).
+5. Fall back to raw coordinates only when no matcher fits: "tap"/"swipe" take screen points (origin top-left, same units as ui_tree frames), "type_text" needs a focused text field, "button" presses hardware buttons. Use "screenshot" to verify visual details the tree cannot express.
+6. Use "record_start"/"record_stop" for video evidence, "state" for deterministic snapshots/fixtures, and "journal_export" to export the run's journal as PR-ready evidence (run_id = lease_id).
+7. Call "lease_release" when done so other agents can use the target.`
+
 // Server serves MCP over a stdio-style transport.
 type Server struct {
-	client *client.Client
-	tools  []Tool
+	client  *client.Client
+	version string
+	tools   []Tool
 
 	mu    sync.Mutex
 	out   *json.Encoder
@@ -33,8 +47,12 @@ type Server struct {
 }
 
 // New builds a Server exposing the standard manzanas toolset over c.
-func New(c *client.Client) *Server {
-	s := &Server{client: c, owned: make(map[string]bool)}
+// version is reported in serverInfo (the CLI passes its build version).
+func New(c *client.Client, version string) *Server {
+	if version == "" {
+		version = "dev"
+	}
+	s := &Server{client: c, version: version, owned: make(map[string]bool)}
 	s.tools = allTools()
 	return s
 }
@@ -153,7 +171,12 @@ func (s *Server) dispatch(ctx context.Context, req rpcRequest) {
 		s.reply(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "manzanas", "version": "0.1.0"},
+			"serverInfo": map[string]any{
+				"name":    "manzanas",
+				"title":   "manzanas iOS simulator fleet",
+				"version": s.version,
+			},
+			"instructions": serverInstructions,
 		}})
 	case "notifications/initialized", "initialized":
 		// no-op
@@ -210,9 +233,10 @@ func (s *Server) handleToolCall(ctx context.Context, req rpcRequest) {
 	}
 	content, err := tool.Call(ctx, s, params.Arguments)
 	if err != nil {
-		// Tool errors are results with isError, per the MCP spec.
+		// Tool errors are results with isError, per the MCP spec. Append a
+		// what-to-do-next hint so the agent can recover without the docs.
 		s.reply(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-			"content": []map[string]any{{"type": "text", "text": err.Error()}},
+			"content": []map[string]any{{"type": "text", "text": withHint(err)}},
 			"isError": true,
 		}})
 		return

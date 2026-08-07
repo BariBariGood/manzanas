@@ -1,6 +1,10 @@
 # manzanasd — the fleet daemon. Canonical copy; mirrored to the
 # BariBariGood/homebrew-tap repo (Formula/manzanasd.rb) — keep both in sync
-# and bump the tag together on each release.
+# and bump tag/revision together on each release.
+#
+# Builds from source because the manzanasd repo (and its release artifacts)
+# are private; git auth comes from the machine's ~/.netrc, same as any
+# other git operation.
 #
 # The service block mirrors deploy/com.baribarigood.manzanasd.plist in the
 # manzanas repo (RunAtLoad, KeepAlive unless clean exit, port 7433,
@@ -10,7 +14,8 @@ class Manzanasd < Formula
   desc "Mac daemon for multi-agent iOS simulator fleet orchestration"
   homepage "https://github.com/BariBariGood/manzanas"
   url "https://github.com/BariBariGood/manzanas.git",
-      tag: "v0.2.0"
+      tag:      "v0.2.0",
+      revision: "3f7df3e0a2c6dc6c46674513de9c82d59067c135"
   license "MIT"
   head "https://github.com/BariBariGood/manzanas.git", branch: "main"
 

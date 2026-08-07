@@ -8,15 +8,15 @@ import (
 func toolState() Tool {
 	return Tool{
 		Name:        "state",
-		Description: "Deterministic simulator state (target derived from lease): action=snapshot returns SnapshotInfo (optional label); restore needs snapshot (ID or label, optional reboot); fixture needs name (e.g. statusbar, privacy, locale) + payload.",
+		Description: "Deterministic simulator state control (target derived from the lease): action=snapshot saves the current state; restore returns to a saved snapshot; fixture applies a named environment preset (clean status bar, granted privacy permissions, locale, timezone, push payload, open URL).",
 		InputSchema: schema(map[string]map[string]any{
-			"lease_id": {"type": "string"},
-			"action":   {"type": "string", "enum": []string{"snapshot", "restore", "fixture"}},
-			"label":    {"type": "string", "description": "for snapshot (optional)"},
-			"snapshot": {"type": "string", "description": "for restore: snapshot ID or label"},
-			"reboot":   {"type": "boolean", "description": "for restore: shutdown+restore+boot if booted"},
-			"name":     {"type": "string", "description": "fixture name"},
-			"payload":  {"type": "object", "description": "fixture payload"},
+			"lease_id": {"type": "string", "description": "active lease, from lease_acquire"},
+			"action":   {"type": "string", "enum": []string{"snapshot", "restore", "fixture"}, "description": "which state operation to run"},
+			"label":    {"type": "string", "description": "snapshot only: optional human-readable label to restore by later"},
+			"snapshot": {"type": "string", "description": "restore only: snapshot ID or label from a previous snapshot"},
+			"reboot":   {"type": "boolean", "description": "restore only: shutdown + restore + boot when the target is booted"},
+			"name":     {"type": "string", "enum": []string{"statusbar", "privacy", "push", "locale", "timezone", "url"}, "description": "fixture only: which fixture to apply"},
+			"payload":  {"type": "object", "description": "fixture only: fixture-specific parameters (see docs/state.md), e.g. {\"time\": \"9:41\"} for statusbar"},
 		}, "lease_id", "action"),
 		Call: func(ctx context.Context, s *Server, args map[string]any) ([]map[string]any, error) {
 			leaseID, err := requireLease(args)

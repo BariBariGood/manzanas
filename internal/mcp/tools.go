@@ -22,8 +22,15 @@ func allTools() []Tool {
 	return []Tool{
 		toolLeaseAcquire(),
 		toolLeaseRelease(),
+		toolLeaseRenew(),
 		toolTargets(),
 		toolObserve(),
+		toolUITree(),
+		toolTapElement(),
+		toolTypeIntoElement(),
+		toolScrollToElement(),
+		toolWaitForElement(),
+		toolWaitTreeStable(),
 		toolTap(),
 		toolSwipe(),
 		toolType(),
@@ -33,6 +40,7 @@ func allTools() []Tool {
 		toolRecordStop(),
 		toolApp(),
 		toolState(),
+		toolJournalExport(),
 	}
 }
 

@@ -10,6 +10,7 @@
 | Device type | iPhone 17 Pro |
 | Started | 2026-08-01 11:59:00 UTC |
 | Entries | 6 |
+| Result | **FAILED** (1 of 6 steps errored) |
 
 ### Actions
 
@@ -19,7 +20,7 @@
 | 2 | 2026-08-01 12:00:00 | action | targets.boot | ok | `udid=AAAA-1111` |
 | 3 | 2026-08-01 12:00:00 | observation | journal.artifact | ok | `name=boot.png` |
 | 4 | 2026-08-01 12:00:00 | segment | recording.stop | ok | `bytes=2.097152e+06` `codec=hevc` `duration_s=12.5` `reason=stopped` `udid=AAAA-1111` |
-| 5 | 2026-08-01 12:00:00 | action | targets.shutdown | error | sim wedged |
+| 5 | 2026-08-01 12:00:00 | action | targets.shutdown | **error** | sim wedged |
 | 6 | 2026-08-01 12:00:00 | lease | leases.release | ok |  |
 
 ### Artifacts

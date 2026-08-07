@@ -28,9 +28,11 @@ wire protocol (`proto/PROTOCOL.md`).
 ## MCP for agents
 
 `manzanas mcp` serves lease-scoped MCP tools over stdio: `lease_acquire`,
-`lease_release`, `targets`, `observe`, `tap`, `swipe`, `type_text`,
-`button`, `screenshot` (image content), `app`, `state`. Leases acquired in
-a session are auto-released when the session ends.
+`lease_release`, `lease_renew`, `targets`, `observe`, `tap`, `swipe`,
+`type_text`, `button`, `screenshot` (image content), `app`, `state`,
+`record_start`, `record_stop`. Leases acquired in a session are
+auto-released when the session ends. Full setup + troubleshooting:
+[docs/mcp.md](../docs/mcp.md).
 
 ### Claude Code
 

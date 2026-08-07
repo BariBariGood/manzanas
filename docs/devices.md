@@ -44,7 +44,7 @@ connecting the device over USB or Wi-Fi instead.
 | `terminate_app` | `devicectl device process terminate --pid` | needs a connected device; payload requires `pid` (devicectl terminates by process id, not bundle id) |
 | `tap`, `swipe`, `type`, `button`, `observe`, `screenshot` | WebDriverAgent HTTP | needs a running WDA endpoint (below) |
 | `pasteboard_get` / `pasteboard_set` | WebDriverAgent HTTP | `pasteboard_get` requires the WDA app to be foregrounded on iOS 13+ (WDA restriction) |
-| `tap_element`, `type_into_element`, `wait_for_element`, `wait_tree_stable` | WebDriverAgent HTTP | same composite semantics as simulators, driven off the WDA source tree |
+| `tap_element`, `type_into_element`, `scroll_to_element`, `wait_for_element`, `wait_tree_stable` | WebDriverAgent HTTP | same composite semantics as simulators, driven off the WDA source tree |
 | `key` / `key_sequence` | — | `not_implemented` (raw HID keycodes are an AXe/CoreSimulator concept WDA does not expose) |
 | warm pool, state engine (snapshots/erase), video recording, streaming | — | simulator-only; devices are excluded by construction |
 

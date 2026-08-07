@@ -193,6 +193,15 @@ func (b *AXeBackend) tapXY(ctx context.Context, udid string, x, y float64) error
 		"tap", "-x", fmtNum(x), "-y", fmtNum(y))
 }
 
+// swipeXY swipes between two screen points, preferring the resident warm
+// helper.
+func (b *AXeBackend) swipeXY(ctx context.Context, udid string, x1, y1, x2, y2 float64) error {
+	return b.dispatchHID(ctx, udid, "swipe",
+		map[string]any{"start_x": x1, "start_y": y1, "end_x": x2, "end_y": y2},
+		"swipe", "--start-x", fmtNum(x1), "--start-y", fmtNum(y1),
+		"--end-x", fmtNum(x2), "--end-y", fmtNum(y2))
+}
+
 func handleButton(ctx context.Context, b *AXeBackend, udid string, p map[string]any) (map[string]any, error) {
 	name, _ := p["name"].(string)
 	if !validButtons[name] {

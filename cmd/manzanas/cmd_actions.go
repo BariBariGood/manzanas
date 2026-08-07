@@ -221,6 +221,54 @@ func cmdScreenshot(ctx context.Context, app *appEnv, args []string) error {
 	return nil
 }
 
+// cmdScrollToElement implements `manzanas scroll-to-element --label TEXT
+// [--direction down] --lease ID` ("scroll_to_element" action): scroll a
+// container until the matched element is inside the viewport.
+func cmdScrollToElement(ctx context.Context, app *appEnv, args []string) error {
+	fs := app.newFlagSet("scroll-to-element")
+	lease := fs.String("lease", os.Getenv("MANZANAS_LEASE"), "active lease ID (or $MANZANAS_LEASE)")
+	label := fs.String("label", "", "match by accessibility label (substring unless --exact)")
+	role := fs.String("role", "", "match by role (exact, e.g. Button, Cell)")
+	value := fs.String("value", "", "match by value (substring unless --exact)")
+	id := fs.String("id", "", "match by accessibility identifier (exact)")
+	placeholder := fs.String("placeholder", "", "match by placeholder (substring unless --exact)")
+	exact := fs.Bool("exact", false, "text fields must match exactly")
+	direction := fs.String("direction", "", "scroll direction when the element is not visible yet: down (default), up, left, right")
+	maxScrolls := fs.Int("max-scrolls", 0, "max swipe attempts (default 8, max 30)")
+	timeoutMS := fs.Int("timeout-ms", 0, "overall budget in milliseconds (default 30000)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("scroll-to-element: unexpected argument %q", fs.Arg(0))
+	}
+	if *lease == "" {
+		return fmt.Errorf("scroll-to-element: --lease (or $MANZANAS_LEASE) is required")
+	}
+	payload := map[string]any{}
+	for k, v := range map[string]string{"label": *label, "role": *role, "value": *value,
+		"id": *id, "placeholder": *placeholder, "direction": *direction} {
+		if v != "" {
+			payload[k] = v
+		}
+	}
+	if *exact {
+		payload["exact"] = true
+	}
+	if *maxScrolls > 0 {
+		payload["max_scrolls"] = *maxScrolls
+	}
+	if *timeoutMS > 0 {
+		payload["timeout_ms"] = *timeoutMS
+	}
+	res, err := app.client.Dispatch(ctx, proto.ActionRequest{
+		LeaseID: *lease, Kind: "scroll_to_element", Payload: payload})
+	if err != nil {
+		return err
+	}
+	return emitActionResult(app, res)
+}
+
 // cmdApp implements `manzanas app install|launch|terminate` (app.* actions).
 func cmdApp(ctx context.Context, app *appEnv, args []string) error {
 	sub, err := requireArg(args, 0, "app subcommand (install|launch|terminate)")

@@ -121,6 +121,13 @@ func handleDeviceTypeIntoElement(ctx context.Context, b *DeviceBackend, udid str
 	return elemTypeInto(ctx, b, udid, p)
 }
 
+func handleDeviceScrollToElement(ctx context.Context, b *DeviceBackend, udid string, p map[string]any) (map[string]any, error) {
+	if _, err := b.wdaFor(udid); err != nil {
+		return nil, err
+	}
+	return elemScrollTo(ctx, b, udid, p)
+}
+
 func handleDeviceWaitForElement(ctx context.Context, b *DeviceBackend, udid string, p map[string]any) (map[string]any, error) {
 	if _, err := b.wdaFor(udid); err != nil {
 		return nil, err
@@ -160,6 +167,18 @@ func (b *DeviceBackend) observeOnce(ctx context.Context, udid string, _ bool) (o
 		return observation{}, errNotYet
 	}
 	return observation{nodes: nodes, viewport: wdaViewport(src)}, nil
+}
+
+// swipeXY implements scrollDriver via WDA.
+func (b *DeviceBackend) swipeXY(ctx context.Context, udid string, x1, y1, x2, y2 float64) error {
+	c, err := b.wdaFor(udid)
+	if err != nil {
+		return err
+	}
+	if err := c.Swipe(ctx, x1, y1, x2, y2, 0.5); err != nil {
+		return b.wdaFail(udid, "swipe", err)
+	}
+	return nil
 }
 
 // tapXY implements elementDriver via WDA.

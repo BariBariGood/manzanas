@@ -78,6 +78,7 @@ func NewAXe(opts ...Option) *AXeBackend {
 		"key_sequence":      handleKeySequence,
 		"tap_element":       handleTapElement,
 		"type_into_element": handleTypeIntoElement,
+		"scroll_to_element": handleScrollToElement,
 		"observe":           handleObserve,
 		"wait_for_element":  handleWaitForElement,
 		"wait_tree_stable":  handleWaitTreeStable,
@@ -152,7 +153,7 @@ func detectAXe() string {
 var hidKinds = map[string]bool{
 	"tap": true, "swipe": true, "type": true, "button": true,
 	"key": true, "key_sequence": true,
-	"tap_element": true, "type_into_element": true,
+	"tap_element": true, "type_into_element": true, "scroll_to_element": true,
 }
 
 // Dispatch implements Backend.

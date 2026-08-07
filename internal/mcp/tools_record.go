@@ -23,11 +23,11 @@ func leaseTargetUDID(ctx context.Context, s *Server, leaseID string) (string, er
 func toolRecordStart() Tool {
 	return Tool{
 		Name:        "record_start",
-		Description: "Start a screen recording of the leased simulator (mp4). One recording per simulator; it auto-stops at the daemon's duration/size caps and when the lease ends. Stop with record_stop to get the artifact.",
+		Description: "Start a screen recording of the leased target (mp4). One recording per target; it auto-stops at the daemon's duration/size caps and when the lease ends. Stop with record_stop to get the artifact.",
 		InputSchema: schema(map[string]map[string]any{
-			"lease_id":    {"type": "string"},
-			"codec":       {"type": "string", "enum": []string{"hevc", "h264"}, "description": "default hevc"},
-			"max_seconds": {"type": "integer", "description": "duration cap; default/max is the daemon cap"},
+			"lease_id":    {"type": "string", "description": "active lease, from lease_acquire"},
+			"codec":       {"type": "string", "enum": []string{"hevc", "h264"}, "description": "video codec; default hevc (smaller), use h264 for maximum player compatibility"},
+			"max_seconds": {"type": "integer", "description": "duration cap in seconds; default/max is the daemon's configured cap"},
 		}, "lease_id"),
 		Call: func(ctx context.Context, s *Server, args map[string]any) ([]map[string]any, error) {
 			leaseID, err := requireLease(args)
@@ -53,9 +53,9 @@ func toolRecordStart() Tool {
 func toolRecordStop() Tool {
 	return Tool{
 		Name:        "record_stop",
-		Description: "Stop the leased simulator's screen recording; the finalized mp4 lands in the run journal (download via GET /v0/journal/{lease_id}/artifacts/{path}).",
+		Description: "Stop the leased target's screen recording; the finalized mp4 lands in the run journal (download via GET /v0/journal/{lease_id}/artifacts/{path} on the daemon, or `manzanas journal`).",
 		InputSchema: schema(map[string]map[string]any{
-			"lease_id": {"type": "string"},
+			"lease_id": {"type": "string", "description": "active lease, from lease_acquire"},
 		}, "lease_id"),
 		Call: func(ctx context.Context, s *Server, args map[string]any) ([]map[string]any, error) {
 			leaseID, err := requireLease(args)

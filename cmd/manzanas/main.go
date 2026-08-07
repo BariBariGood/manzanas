@@ -28,6 +28,7 @@ Commands:
   boot|shutdown UDID                   boot/shut down a leased target
   tap|swipe|type|button                HID actions (require --lease)
   observe                              compact a11y tree
+  scroll-to-element                    scroll until a matched element is visible
   screenshot -o FILE.png               capture the screen (-o - for stdout)
   record start|stop                    screen recording (requires --lease)
   app install|launch|terminate         app lifecycle
@@ -35,6 +36,7 @@ Commands:
   stream url                           print a live view URL
   journal tail RUN_ID                  print (or --follow) the run journal
   journal upload RUN_ID FILE...        upload evidence artifacts to a run
+  journal export RUN_ID                PR-ready evidence summary (--format md|json)
   fleet hosts|placements|hints         broker fleet views (--daemon BROKER)
   mcp                                  serve MCP tools over stdio
   version                              print the client version
@@ -49,15 +51,18 @@ Global flags:
 type command func(ctx context.Context, app *appEnv, args []string) error
 
 var commands = map[string]command{
-	"targets":    cmdTargets,
-	"lease":      cmdLease,
-	"boot":       cmdBoot,
-	"shutdown":   cmdShutdownTarget,
-	"tap":        cmdTap,
-	"swipe":      cmdSwipe,
-	"type":       cmdType,
-	"button":     cmdButton,
-	"observe":    cmdObserve,
+	"targets":  cmdTargets,
+	"lease":    cmdLease,
+	"boot":     cmdBoot,
+	"shutdown": cmdShutdownTarget,
+	"tap":      cmdTap,
+	"swipe":    cmdSwipe,
+	"type":     cmdType,
+	"button":   cmdButton,
+	"observe":  cmdObserve,
+
+	"scroll-to-element": cmdScrollToElement,
+
 	"screenshot": cmdScreenshot,
 	"app":        cmdApp,
 	"state":      cmdState,

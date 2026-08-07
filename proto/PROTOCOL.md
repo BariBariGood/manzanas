@@ -366,6 +366,7 @@ HID (AXe):
 | `key_sequence` | `keycodes` (array; each an integer in `[0, 2^32-1]`, else `400 bad_request`) | `count` |
 | `tap_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `anchor?` (`start` \| `center` (default) \| `end`), `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node, no children), `x`, `y` (tapped point), `elapsed_ms`, `polls` |
 | `type_into_element` | same predicate/timing/anchor fields plus `text`, `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `tap_element`'s fields plus `typed_runes`, `strategy?` (echoed when `paste`) |
+| `scroll_to_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `anchor?`, `direction?` (`down` (default) \| `up` \| `left` \| `right`), `max_scrolls?` (default 8, max 30), `refresh?`, `timeout_ms?` (default 30000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children), `scrolls`, `polls`, `elapsed_ms`, `hash` (tree hash at success) |
 
 `tap_element` and `type_into_element` are composite actions: the server
 observes the a11y tree, finds the best element matching the predicate
@@ -389,6 +390,20 @@ off screen (a sheet still animating in) keeps the wait polling within
 `timeout_ms`; `off_viewport` surfaces only when the budget expires with
 no on-screen match. `refresh: true` forces every poll
 to bypass the resident warm helper and observe cold (see `observe`).
+
+`scroll_to_element` scrolls until the matched element's anchor point is
+inside the viewport, with bounded swipe attempts (`max_scrolls`). While
+the element is absent from the tree it swipes in `direction` (the edge of
+the content to reveal: `down` reveals content below the fold); once the
+element is in the tree but off-viewport, each swipe moves toward its
+frame instead. Swipes travel 40% of the viewport's height (or width)
+through its centre, so one swipe cannot fling far past the target. The
+two failure modes are distinct: an element that never appeared in the
+tree is `408 timeout`, while one that matched but could not be brought
+into the viewport (pinned off-screen, non-scrollable container) is `409
+off_viewport`. On success the result carries the element with its
+`frame`, the swipe count, and the tree `hash` of the final observation
+(cheap change detection without another `observe`).
 
 Typing strategies (`type` and `type_into_element`):
 
@@ -475,7 +490,7 @@ Waiting (deterministic sync primitives; poll the same a11y pipeline as
 
 | `kind` | payload | result |
 |---|---|---|
-| `wait_for_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `absent?`, `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls` |
+| `wait_for_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `absent?`, `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls`, `hash` (tree hash of the final poll) |
 | `wait_tree_stable` | `stable_samples?` (default 3, 2–20), `timeout_ms?` (default 15000, max 120000, doubles as the max wait), `interval_ms?` (default 500, min 10), `require_stable?` (default false) | `stable`, `hash`, `settled_ms`, `samples` |
 
 `wait_for_element` polls a fresh compacted tree each interval until an
@@ -591,6 +606,7 @@ from simulators in these protocol-visible ways:
 | `type_into_element` | same fields as the simulator kind | same result shape |
 | `wait_for_element` | same fields as the simulator kind | same result shape |
 | `wait_tree_stable` | same fields as the simulator kind | same result shape |
+| `scroll_to_element` | same fields as the simulator kind | same result shape (swipes via WDA) |
 | `screenshot` | same fields as the simulator kind | same result shape, `backend:"wda"` |
 
 > Device `observe` changed in this version: it previously returned the raw

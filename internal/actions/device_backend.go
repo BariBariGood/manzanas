@@ -80,6 +80,7 @@ func NewDevice(opts ...DeviceOption) *DeviceBackend {
 		"button":            handleDeviceButton,
 		"tap_element":       handleDeviceTapElement,
 		"type_into_element": handleDeviceTypeIntoElement,
+		"scroll_to_element": handleDeviceScrollToElement,
 		"wait_for_element":  handleDeviceWaitForElement,
 		"wait_tree_stable":  handleDeviceWaitTreeStable,
 		"pasteboard_get":    handleDevicePasteboardGet,

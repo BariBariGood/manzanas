@@ -150,6 +150,103 @@ See `proto/PROTOCOL.md` §7:
 - WS `journal.tail` — replay from `from_seq`, then live entries as
   `journal.entry` events (for `manzanas journal tail`).
 
+## Exporting PR evidence
+
+`manzanas journal export` turns a run into a self-contained, PR-ready
+evidence document: run metadata, the seq-ordered step table with durations
+implied by per-step timestamps and failures highlighted, and the artifact
+list (screenshots, video segments) with content digests.
+
+```sh
+manzanas journal export $RUN_ID                    # markdown to stdout
+manzanas journal export $RUN_ID -o evidence.md     # write to a file
+manzanas journal export $RUN_ID --format json      # meta + entries + failure count
+manzanas journal export $RUN_ID --journal-dir ~/.manzanasd/journal   # offline, no daemon
+```
+
+The run ID is the lease ID. The default path pages
+`GET /v0/journal/{run}` on the daemon; `--journal-dir` reads the on-disk
+store directly, so evidence can be exported after the daemon has stopped
+(or from a copied run directory). `GET /v0/journal/{run}/export.md`
+returns the same markdown over HTTP, and MCP agents get it via the
+`journal_export` tool.
+
+Sample output:
+
+```markdown
+## manzanasd run journal — `lse_ab12cd34`
+
+| | |
+|---|---|
+| Format | `journal/v0` |
+| Agent | claude-1 |
+| Purpose | onboarding smoke |
+| Target | iPhone 17 Pro (`AAAA-1111`) |
+| Runtime | iOS 26.5 |
+| Device type | iPhone 17 Pro |
+| Started | 2026-08-01 11:59:00 UTC |
+| Entries | 4 |
+| Result | **FAILED** (1 of 4 steps errored) |
+
+### Actions
+
+| # | Time (UTC) | Kind | Action | Status | Detail |
+|---|---|---|---|---|---|
+| 1 | 2026-08-01 12:00:00 | lease | leases.acquire | ok | `labels=[ios26]` `ttl_seconds=300` |
+| 2 | 2026-08-01 12:00:01 | action | targets.boot | ok | `udid=AAAA-1111` |
+| 3 | 2026-08-01 12:00:09 | observation | screenshot | ok | `format=png` |
+| 4 | 2026-08-01 12:00:12 | action | tap | **error** | element not found |
+
+### Artifacts
+
+- `artifacts/deadbeef00112233.png` (step 3, sha256 `deadbeef0011…`)
+```
+
+Artifact bullets carry the run-relative path and digest; fetch the bytes
+with `GET /v0/journal/{run}/artifacts/{path}` while the run is retained.
+Cite evidence as "run `<run_id>`, artifact `<path>`" (see
+[agent-qa.md](agent-qa.md), "QA evidence durability").
+
+### CI: attach evidence to a PR
+
+The composite action (`action/`) has this built in — set
+`journal-evidence: "true"` and the exported markdown is added to the job
+step summary, plus posted as a PR comment when `comment-pr: "true"`.
+Without the action, the recipe is: lease → run → export → comment:
+
+```yaml
+jobs:
+  sim-qa:
+    runs-on: [self-hosted, macos, tailnet]   # must reach the daemon
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: BariBariGood/manzanas/action@v0.2.0
+        with:
+          daemon-addr: http://100.64.0.1:7433
+          labels: ios26
+          journal-evidence: "true"
+          comment-pr: "true"
+          run: |
+            # ... drive the app under $MANZANAS_LEASE ...
+            manzanas journal upload "$MANZANAS_LEASE" my-shot.png
+```
+
+or as raw steps with `GITHUB_TOKEN`:
+
+```sh
+manzanas journal export "$MANZANAS_LEASE" -o evidence.md
+gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@evidence.md
+```
+
+**Security posture, stated plainly:** the daemon trusts its network (see
+below), so any CI runner that can reach it holds full lease/action power
+over the fleet. Self-hosted runners must **never** execute untrusted fork
+PR code — use them only on private repos (or with fork PR workflows
+disabled), and keep daemons tailnet-only or localhost so a compromised
+cloud runner can't reach them. Never feed untrusted data (PR titles,
+`github.event.*` on `pull_request_target`) into the action's inputs.
+
 ## Authorization (v0 limitation)
 
 The v0 protocol carries no caller identity — the lease ID is the only

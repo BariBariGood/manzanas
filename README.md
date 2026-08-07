@@ -120,6 +120,18 @@ manzanas mcp        # lease-scoped MCP tools over stdio for agents
 
 Production installs (launchd, releases): [docs/install.md](docs/install.md).
 
+## MCP (Claude Code, Cursor, Codex)
+
+`manzanas mcp` serves the whole toolset over the Model Context Protocol
+(stdio), so any MCP-capable agent can lease and drive simulators — with
+per-session auto-release of leases and self-describing tool errors.
+Ready-to-paste client configs and troubleshooting:
+[docs/mcp.md](docs/mcp.md).
+
+```sh
+claude mcp add manzanas -e MANZANASD_ADDR=mac-host:7433 -- /path/to/manzanas mcp
+```
+
 ## Architecture
 
 ```
@@ -172,6 +184,8 @@ Subsystems:
 - [docs/broker.md](docs/broker.md) — multi-Mac federation.
 - [docs/eval.md](docs/eval.md) — the scenario-driven determinism
   benchmark harness.
+- [docs/mcp.md](docs/mcp.md) — the MCP server: setup, Claude
+  Code/Cursor/Codex configuration, troubleshooting.
 - [clients/README.md](clients/README.md) — `manzanas` CLI + MCP
   quickstarts; [clients/npm/](clients/npm/README.md); GitHub Action in
   [action/](action/README.md).

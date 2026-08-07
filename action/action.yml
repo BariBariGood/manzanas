@@ -43,6 +43,13 @@ inputs:
     description: "post the screenshot as a PR comment (needs pull-requests: write)"
     required: false
     default: "false"
+  journal-evidence:
+    description: >
+      export the run's journal as PR-ready markdown evidence: it is added
+      to the job step summary, and posted as a PR comment when comment-pr
+      is also true
+    required: false
+    default: "false"
   github-token:
     description: "token used to download releases and post PR comments"
     required: false
@@ -64,6 +71,9 @@ outputs:
   screenshot-path:
     description: "path of the captured screenshot (empty if disabled/failed)"
     value: ${{ steps.shot.outputs.path }}
+  evidence-path:
+    description: "path of the exported journal evidence markdown (empty if disabled/failed)"
+    value: ${{ steps.evidence.outputs.path }}
 
 runs:
   using: composite
@@ -111,6 +121,15 @@ runs:
         path: ${{ steps.shot.outputs.path }}
         if-no-files-found: ignore
 
+    - name: Export journal evidence
+      id: evidence
+      if: ${{ always() && inputs.journal-evidence == 'true' && steps.lease.outputs.lease_id != '' }}
+      shell: bash
+      env:
+        MANZANASD_ADDR: ${{ inputs.daemon-addr }}
+        MANZANAS_LEASE: ${{ steps.lease.outputs.lease_id }}
+      run: ${{ github.action_path }}/scripts/evidence.sh
+
     - name: Comment on PR
       if: ${{ always() && inputs.comment-pr == 'true' && github.event_name == 'pull_request' && steps.shot.outputs.path != '' }}
       shell: bash
@@ -121,6 +140,15 @@ runs:
         TARGET_UDID: ${{ steps.lease.outputs.target_udid }}
         ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: ${{ github.action_path }}/scripts/comment-pr.sh
+
+    - name: Comment evidence on PR
+      if: ${{ always() && inputs.comment-pr == 'true' && github.event_name == 'pull_request' && steps.evidence.outputs.path != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EVIDENCE_PATH: ${{ steps.evidence.outputs.path }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: ${{ github.action_path }}/scripts/evidence-comment.sh
 
     - name: Release lease
       if: ${{ always() && steps.lease.outputs.lease_id != '' }}

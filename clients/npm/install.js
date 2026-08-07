@@ -3,8 +3,8 @@
 // Postinstall: download the matching manzanas release tarball and extract
 // the `manzanas` binary into bin-native/ (esbuild-style native binary
 // distribution). Set MANZANAS_BINARY_PATH to skip the download and use a
-// locally-built binary instead. If GITHUB_TOKEN (or GH_TOKEN) is set it
-// is used to authorize the release download.
+// locally-built binary instead. While the repo is private, set
+// GITHUB_TOKEN (or GH_TOKEN) so the release download is authorized.
 
 const fs = require("fs");
 const path = require("path");

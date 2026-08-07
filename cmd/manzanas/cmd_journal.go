@@ -12,9 +12,9 @@ import (
 	"github.com/BariBariGood/manzanas/internal/journal"
 )
 
-// cmdJournal implements `manzanas journal tail|upload`.
+// cmdJournal implements `manzanas journal tail|upload|export`.
 func cmdJournal(ctx context.Context, app *appEnv, args []string) error {
-	sub, err := requireArg(args, 0, "journal subcommand (tail|upload)")
+	sub, err := requireArg(args, 0, "journal subcommand (tail|upload|export)")
 	if err != nil {
 		return err
 	}
@@ -23,9 +23,73 @@ func cmdJournal(ctx context.Context, app *appEnv, args []string) error {
 		return journalTail(ctx, app, args[1:])
 	case "upload":
 		return journalUpload(ctx, app, args[1:])
+	case "export":
+		return journalExport(ctx, app, args[1:])
 	default:
 		return fmt.Errorf("unknown journal subcommand %q", sub)
 	}
+}
+
+// journalExport renders a run as PR-ready evidence: a self-contained
+// markdown summary (or the raw JSON export) built from the run's metadata
+// and full entry list. It reads from the daemon by default, or offline
+// straight from a journal directory with --journal-dir.
+func journalExport(ctx context.Context, app *appEnv, args []string) error {
+	runID, err := requireArg(args, 0, "RUN_ID")
+	if err != nil {
+		return err
+	}
+	fs := app.newFlagSet("journal export")
+	format := fs.String("format", "md", "output format: md or json")
+	journalDir := fs.String("journal-dir", "", "read offline from this journal directory (e.g. ~/.manzanasd/journal) instead of the daemon")
+	outPath := fs.String("o", "", "write to FILE instead of stdout")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("journal export: unexpected argument %q", fs.Arg(0))
+	}
+	if *format != "md" && *format != "json" {
+		return fmt.Errorf("journal export: --format must be md or json, got %q", *format)
+	}
+
+	var meta journal.RunMeta
+	var entries []journal.Entry
+	if *journalDir != "" {
+		// NewFileStore creates the directory (it serves the daemon's write
+		// path); a read-only export must fail loudly on a mistyped one.
+		if _, statErr := os.Stat(*journalDir); statErr != nil {
+			return fmt.Errorf("journal export: open %s: %w", *journalDir, statErr)
+		}
+		store, err := journal.NewFileStore(*journalDir)
+		if err != nil {
+			return fmt.Errorf("journal export: open %s: %w", *journalDir, err)
+		}
+		if entries, err = store.Read(ctx, runID, 0, 0); err != nil {
+			return fmt.Errorf("journal export: %w", err)
+		}
+		if meta, err = store.ReadMeta(runID); err != nil {
+			return fmt.Errorf("journal export: %w", err)
+		}
+	} else if meta, entries, err = app.client.JournalExport(ctx, runID); err != nil {
+		return err
+	}
+
+	doc := journal.BuildExport(runID, meta, entries)
+	var rendered []byte
+	if *format == "json" {
+		if rendered, err = json.MarshalIndent(doc, "", "  "); err != nil {
+			return err
+		}
+		rendered = append(rendered, '\n')
+	} else {
+		rendered = []byte(doc.Markdown())
+	}
+	if *outPath != "" {
+		return os.WriteFile(*outPath, rendered, 0o644)
+	}
+	_, err = app.stdout.Write(rendered)
+	return err
 }
 
 // journalTail maps to GET /v0/journal/{run_id}: prints existing entries,

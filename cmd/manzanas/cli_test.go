@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/BariBariGood/manzanas/internal/client"
+	"github.com/BariBariGood/manzanas/internal/journal"
 )
 
 // runCLI runs one manzanas command against the fake daemon and returns
@@ -362,6 +363,114 @@ func TestJournalUpload(t *testing.T) {
 	}
 }
 
+func TestJournalExport(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	// Default markdown: pages via next_seq until the run drains, renders
+	// meta, the ordered step table with the failure highlighted, and the
+	// artifact list.
+	out, _, err := runCLI(t, f, false, "journal", "export", "run_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## manzanasd run journal — `run_1`",
+		"| Agent | agent-fake |",
+		"| Entries | 3 |",
+		"| Result | **FAILED** (1 of 3 steps errored) |",
+		"| **error** | element not found |",
+		"`artifacts/deadbeef.png` (step 3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("markdown export missing %q:\n%s", want, out)
+		}
+	}
+
+	// --format json returns the full export doc.
+	out, _, err = runCLI(t, f, false, "journal", "export", "run_1", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		RunID    string           `json:"run_id"`
+		Entries  []map[string]any `json:"entries"`
+		Failures int              `json:"failures"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("json export not JSON: %v\n%s", err, out)
+	}
+	if doc.RunID != "run_1" || len(doc.Entries) != 3 || doc.Failures != 1 {
+		t.Fatalf("json export wrong: %+v", doc)
+	}
+
+	// -o writes to a file instead of stdout.
+	path := filepath.Join(t.TempDir(), "evidence.md")
+	out, _, err = runCLI(t, f, false, "journal", "export", "run_1", "-o", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Fatalf("-o still wrote to stdout: %q", out)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "run journal — `run_1`") {
+		t.Fatalf("-o file content wrong: %q", b)
+	}
+
+	if _, _, err := runCLI(t, f, false, "journal", "export", "run_1", "--format", "xml"); err == nil {
+		t.Fatal("expected error for bad --format")
+	}
+}
+
+func TestJournalExportOffline(t *testing.T) {
+	// --journal-dir reads straight from the on-disk store: no daemon, and
+	// the fake daemon must never see a request.
+	dir := t.TempDir()
+	store, err := journal.NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "lse_off1"
+	if err := store.WriteMeta(runID, journal.RunMeta{
+		FormatVersion: journal.FormatVersion, RunID: runID, AgentID: "agent-offline",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := store.Append(ctx, runID, "action", map[string]any{
+		"action": "targets.boot", "status": "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(ctx, runID, "action", map[string]any{
+		"action": "tap", "status": "error", "error": "sim wedged"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	app := &appEnv{client: client.New("127.0.0.1:1"), stdout: &out, stderr: &out}
+	err = cmdJournal(ctx, app, []string{"export", runID, "--journal-dir", dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| Agent | agent-offline |",
+		"| Result | **FAILED** (1 of 2 steps errored) |",
+		"| **error** | sim wedged |",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("offline export missing %q:\n%s", want, out.String())
+		}
+	}
+
+	// Unknown run in the offline store is a clear error.
+	if err := cmdJournal(ctx, app, []string{"export", "nope", "--journal-dir", dir}); err == nil {
+		t.Fatal("expected error for unknown offline run")
+	}
+}
+
 func TestDaemonUnreachableIsFriendly(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	app := &appEnv{client: client.New("http://127.0.0.1:1"), stdout: &out, stderr: &errBuf}
@@ -378,5 +487,42 @@ func TestNotImplementedSurfacesCode(t *testing.T) {
 	_, _, err := runCLI(t, f, false, "tap", "1", "2", "--lease", "lse_test")
 	if err == nil || !strings.Contains(err.Error(), "not_implemented") {
 		t.Fatalf("expected not_implemented error, got %v", err)
+	}
+}
+
+func TestMCPFailsFastWhenDaemonUnreachable(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	app := &appEnv{client: client.New("http://127.0.0.1:1"), stdout: &out, stderr: &errBuf}
+	err := cmdMCP(context.Background(), app, nil)
+	if err == nil || !strings.Contains(err.Error(), "MANZANASD_ADDR") ||
+		!strings.Contains(err.Error(), "--daemon") {
+		t.Fatalf("expected actionable fail-fast error, got %v", err)
+	}
+}
+
+func TestMCPRejectsUnexpectedArgs(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	app := &appEnv{client: client.New("http://127.0.0.1:1"), stdout: &out, stderr: &errBuf}
+	err := cmdMCP(context.Background(), app, []string{"bogus"})
+	if err == nil || !strings.Contains(err.Error(), "--daemon") {
+		t.Fatalf("expected usage hint, got %v", err)
+	}
+}
+
+func TestMCPServesOverProvidedStreams(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	var out, errBuf bytes.Buffer
+	app := &appEnv{client: client.New(f.URL), stdout: &out, stderr: &errBuf}
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n")
+	if err := serveMCP(context.Background(), app, in, &out); err != nil {
+		t.Fatal(err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("initialize response not JSON: %v", err)
+	}
+	if resp["result"].(map[string]any)["serverInfo"].(map[string]any)["name"] != "manzanas" {
+		t.Fatalf("bad initialize response: %v", resp)
 	}
 }

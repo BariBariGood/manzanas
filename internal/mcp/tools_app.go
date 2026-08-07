@@ -8,12 +8,12 @@ import (
 func toolApp() Tool {
 	return Tool{
 		Name:        "app",
-		Description: "App lifecycle on the leased simulator. action=install needs path (a .app on the daemon host); launch/terminate need bundle_id.",
+		Description: "App lifecycle on the leased target. action=install needs path (a built .app bundle on the daemon's host filesystem, not this machine); launch/terminate need bundle_id.",
 		InputSchema: schema(map[string]map[string]any{
-			"lease_id":  {"type": "string"},
-			"action":    {"type": "string", "enum": []string{"install", "launch", "terminate"}},
-			"path":      {"type": "string", "description": "for install"},
-			"bundle_id": {"type": "string", "description": "for launch/terminate"},
+			"lease_id":  {"type": "string", "description": "active lease, from lease_acquire"},
+			"action":    {"type": "string", "enum": []string{"install", "launch", "terminate"}, "description": "which lifecycle operation to run"},
+			"path":      {"type": "string", "description": "install only: absolute path to a .app bundle on the daemon host"},
+			"bundle_id": {"type": "string", "description": "launch/terminate only: the app's bundle identifier, e.g. com.example.myapp"},
 		}, "lease_id", "action"),
 		Call: func(ctx context.Context, s *Server, args map[string]any) ([]map[string]any, error) {
 			leaseID, err := requireLease(args)
