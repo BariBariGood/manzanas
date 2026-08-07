@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -149,6 +150,15 @@ func newFakeDaemon() *fakeDaemon {
 			nextSeq = seq
 		}
 		writeOK(w, map[string]any{"entries": entries, "next_seq": nextSeq})
+	})
+	mux.HandleFunc("POST /v0/journal/{run_id}/artifacts", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.requests = append(f.requests, recordedRequest{Method: r.Method,
+			Path: r.URL.Path + "?" + r.URL.RawQuery, Body: map[string]any{"bytes": string(data)}})
+		f.mu.Unlock()
+		writeStatus(w, http.StatusCreated, map[string]any{"artifact": map[string]any{
+			"path": "artifacts/deadbeef.png", "sha256": "deadbeef", "bytes": len(data)}})
 	})
 	f.Server = httptest.NewServer(mux)
 	return f

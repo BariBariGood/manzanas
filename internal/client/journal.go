@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -21,4 +22,20 @@ func (c *Client) JournalRead(ctx context.Context, runID string, fromSeq int64, l
 		url.PathEscape(runID), fromSeq, limit)
 	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out.Entries, out.NextSeq, err
+}
+
+// JournalArtifactUpload calls POST /v0/journal/{run_id}/artifacts?name=&kind=
+// with the raw artifact bytes and returns the stored artifact ref. The run's
+// lease must still be active — finished runs are immutable evidence.
+func (c *Client) JournalArtifactUpload(ctx context.Context, runID, name, kind string, data io.Reader) (journal.ArtifactRef, error) {
+	var out struct {
+		Artifact journal.ArtifactRef `json:"artifact"`
+	}
+	q := url.Values{"name": {name}}
+	if kind != "" {
+		q.Set("kind", kind)
+	}
+	path := fmt.Sprintf("/v0/journal/%s/artifacts?%s", url.PathEscape(runID), q.Encode())
+	err := c.doReader(ctx, http.MethodPost, path, "application/octet-stream", data, &out)
+	return out.Artifact, err
 }

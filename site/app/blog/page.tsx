@@ -55,7 +55,7 @@ export default function BlogIndex() {
           >
             <div className="flex items-center gap-3">
               {p.fieldNote ? (
-                <span className="rounded-full bg-[#248a3d]/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#248a3d]">
+                <span className="rounded-full bg-[#c22214]/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#c22214]">
                   Field notes
                 </span>
               ) : null}
@@ -67,7 +67,7 @@ export default function BlogIndex() {
             <p className="copy-secondary mt-3 text-[16px] leading-relaxed">
               {p.teaser}
             </p>
-            <p className="mt-4 text-[14px] font-medium text-[#248a3d]">
+            <p className="mt-4 text-[14px] font-medium text-[#c22214]">
               Read the post →
             </p>
           </Link>

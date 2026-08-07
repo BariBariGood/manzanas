@@ -86,19 +86,27 @@ func (c *Client) Addr() string { return c.base }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var rdr io.Reader
+	var ctype string
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
 		rdr = bytes.NewReader(b)
+		ctype = "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, rdr)
+	return c.doReader(ctx, method, path, ctype, rdr, out)
+}
+
+// doReader is do with a raw request body (e.g. artifact bytes) instead of
+// a JSON-marshalled one.
+func (c *Client) doReader(ctx context.Context, method, path, contentType string, body io.Reader, out any) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
 	if err != nil {
 		return err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

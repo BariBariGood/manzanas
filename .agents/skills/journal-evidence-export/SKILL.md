@@ -52,11 +52,20 @@ While the lease is still active (immutable after release/expiry — upload
 before you release):
 
 ```sh
+manzanas journal upload $LID shot1.png shot2.png   # --kind observation|screenshot|video
+# or raw HTTP:
 curl -s -X POST "$D/v0/journal/$LID/artifacts?name=final-state&kind=screenshot" \
   --data-binary @shot.png
 ```
 
-`kind`: `observation` (default), `screenshot`, or `video`.
+`kind`: `observation` (default over HTTP; the CLI defaults to
+`screenshot`), `screenshot`, or `video`.
+
+**Durability rule:** evidence cited in a GitHub issue, PR, or
+FIXED/closing comment must be uploaded as a journal artifact (cite the
+run id + artifact name) or attached directly to the issue — bare
+session-local filenames die with the session box and are not acceptable
+evidence (see docs/agent-qa.md, "QA evidence durability").
 
 ## Live tail
 
@@ -68,3 +77,5 @@ from `from_seq` then streams new entries).
 Runs are GC'd by `--journal-max-age` (default 7 days) and
 `--journal-max-bytes` (default 2 GiB); live-lease runs are never reclaimed.
 Export evidence promptly — don't rely on the journal as long-term storage.
+For evidence that must outlive retention, also attach the images to the
+GitHub issue/PR.

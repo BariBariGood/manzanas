@@ -321,6 +321,47 @@ func TestJournalTail(t *testing.T) {
 	}
 }
 
+func TestJournalUpload(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	dir := t.TempDir()
+	shot1 := filepath.Join(dir, "104-rm-today.png")
+	shot2 := filepath.Join(dir, "105-rm-today2.png")
+	if err := os.WriteFile(shot1, []byte("png-1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shot2, []byte("png-2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, f, false, "journal", "upload", "run_1", shot1, shot2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := f.last()
+	if req.Method != "POST" ||
+		req.Path != "/v0/journal/run_1/artifacts?kind=screenshot&name=105-rm-today2.png" {
+		t.Fatalf("upload not mapped: %+v", req)
+	}
+	if got := str(req.Body, "bytes"); got != "png-2" {
+		t.Fatalf("wrong artifact bytes: %q", got)
+	}
+	if !strings.Contains(out, "artifacts/deadbeef.png") || !strings.Contains(out, "cite as: run run_1") {
+		t.Fatalf("upload output: %q", out)
+	}
+
+	// --kind maps onto the query; flags may follow the positional files.
+	if _, _, err := runCLI(t, f, false, "journal", "upload", "run_1", shot1, "--kind", "video"); err != nil {
+		t.Fatal(err)
+	}
+	if req := f.last(); req.Path != "/v0/journal/run_1/artifacts?kind=video&name=104-rm-today.png" {
+		t.Fatalf("--kind not mapped: %+v", req)
+	}
+
+	if _, _, err := runCLI(t, f, false, "journal", "upload", "run_1"); err == nil {
+		t.Fatal("expected error for missing FILE args")
+	}
+}
+
 func TestDaemonUnreachableIsFriendly(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	app := &appEnv{client: client.New("http://127.0.0.1:1"), stdout: &out, stderr: &errBuf}

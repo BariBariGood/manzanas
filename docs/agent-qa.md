@@ -167,6 +167,48 @@ curl -s "http://$MANZANASD_ADDR/v0/journal/$MANZANAS_LEASE/export.md" -o evidenc
 status and params, artifact digests. Attach it (plus the JPEGs you saved)
 to the QA report instead of hand-writing a step log.
 
+### QA evidence durability (required for issues and PRs)
+
+A QA session's box — and every screenshot on it — is gone shortly after
+the session ends. Evidence cited in a GitHub issue, PR, or FIXED/closing
+verification comment MUST therefore be durable. Exactly two forms are
+acceptable:
+
+1. **Journal artifacts under a run id.** Upload the files to the run's
+   journal while the lease is still active, then cite the run id plus
+   artifact name/path (e.g. "run `lse_ab12cd34`, artifact
+   `artifacts/deadbeef….png`"):
+
+   ```sh
+   manzanas journal upload $MANZANAS_LEASE 104-rm-today.png 105-rm-today2.png
+   # or raw HTTP:
+   curl -s -X POST "http://$MANZANASD_ADDR/v0/journal/$MANZANAS_LEASE/artifacts?name=104-rm-today.png&kind=screenshot" \
+     --data-binary @104-rm-today.png
+   ```
+
+2. **Attached/embedded directly in the GitHub issue or PR** (drag-drop
+   upload, or a `gh`-uploaded asset), so the image lives on GitHub.
+
+Bare session-local filenames ("see `104-rm-today.png` from the QA
+session") are **not** acceptable evidence: once the session's VM is
+recycled the verdict can't be audited and a disputed retest has nothing
+to compare against.
+
+Rules of thumb:
+
+- Any issue whose severity or verdict rests on visual evidence must
+  attach or upload the key screenshots at filing time.
+- Same for FIXED/closing verification comments: attach or link the pass
+  evidence for at least the headline assertion.
+- When the daemon is in the loop, prefer the journal path — screenshot
+  actions are journaled automatically, so evidence collection is a side
+  effect, not a manual step. Add `export.md` for the step log.
+- Upload before releasing the lease: a run's journal becomes immutable
+  once its lease is released or expires.
+- Journal retention is bounded (default 7 days / 2 GiB — see
+  [journal.md](journal.md)); for anything that must outlive that, also
+  attach the images to the issue.
+
 ## 7. Release
 
 ```sh

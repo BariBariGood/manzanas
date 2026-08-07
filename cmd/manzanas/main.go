@@ -34,6 +34,7 @@ Commands:
   state snapshot|restore|fixture       deterministic state control
   stream url                           print a live view URL
   journal tail RUN_ID                  print (or --follow) the run journal
+  journal upload RUN_ID FILE...        upload evidence artifacts to a run
   fleet hosts|placements|hints         broker fleet views (--daemon BROKER)
   mcp                                  serve MCP tools over stdio
   version                              print the client version

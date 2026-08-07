@@ -36,13 +36,13 @@ function Bar({
     <div className="mt-3">
       <div className="flex items-baseline justify-between font-mono text-[12px]">
         <span className="text-[#424245]">{label}</span>
-        <span className={green ? "font-semibold text-[#248a3d]" : "text-[#6e6e73]"}>
+        <span className={green ? "font-semibold text-[#c22214]" : "text-[#6e6e73]"}>
           {value}
         </span>
       </div>
       <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-black/[0.06]">
         <div
-          className={`h-full rounded-full ${green ? "bg-[#34c759]" : "bg-[#86868b]"}`}
+          className={`h-full rounded-full ${green ? "bg-[#e0301e]" : "bg-[#86868b]"}`}
           style={{ width: `${Math.max(pct, 1.5)}%` }}
         />
       </div>
@@ -64,7 +64,7 @@ function StatCard({
       <div className="flex items-baseline justify-between gap-3">
         <p className="headline text-[17px]">{title}</p>
         {note ? (
-          <span className="whitespace-nowrap rounded-full bg-[#248a3d]/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#248a3d]">
+          <span className="whitespace-nowrap rounded-full bg-[#c22214]/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#c22214]">
             {note}
           </span>
         ) : null}

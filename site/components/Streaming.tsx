@@ -40,12 +40,12 @@ function ViewerMock() {
       <div className="flex flex-col gap-6 p-6 sm:flex-row sm:gap-8 sm:p-10">
         {/* phone */}
         <div className="relative mx-auto w-[150px] shrink-0 sm:w-[180px]">
-          <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-black p-1.5 shadow-[0_0_60px_-15px_rgba(52,199,89,0.35)]">
-            <div className="relative aspect-[9/19.5] overflow-hidden rounded-[22px] bg-gradient-to-b from-[#1a2b1e] via-[#12241a] to-[#0a1510]">
+          <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-black p-1.5 shadow-[0_0_60px_-15px_rgba(224,48,30,0.35)]">
+            <div className="relative aspect-[9/19.5] overflow-hidden rounded-[22px] bg-gradient-to-b from-[#2b1410] via-[#200d09] to-[#130705]">
               <div className="absolute left-1/2 top-2 h-4 w-14 -translate-x-1/2 rounded-full bg-black" />
               <div className="absolute inset-x-3 top-10 space-y-2">
                 <div className="h-7 rounded-lg bg-white/10" />
-                <div className="h-16 rounded-lg bg-[#34c759]/15" />
+                <div className="h-16 rounded-lg bg-[#e0301e]/15" />
                 <div className="h-7 rounded-lg bg-white/[0.07]" />
                 <div className="h-7 w-2/3 rounded-lg bg-white/[0.07]" />
               </div>
@@ -77,8 +77,8 @@ function ViewerMock() {
             ))}
           </div>
           <div className="rounded-xl bg-white/[0.04] p-4 font-mono text-[11px] leading-relaxed text-[#9a9aa0]">
-            <p><span className="text-[#34c759]">→</span> actions.dispatch tap 187,412</p>
-            <p><span className="text-[#34c759]">→</span> actions.dispatch type &quot;hello manzanas&quot;</p>
+            <p><span className="text-[#e0301e]">→</span> actions.dispatch tap 187,412</p>
+            <p><span className="text-[#e0301e]">→</span> actions.dispatch type &quot;hello manzanas&quot;</p>
             <p><span className="text-[#6e6e73]">←</span> observe · tree hash a2ff…09be</p>
           </div>
         </div>

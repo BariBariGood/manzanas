@@ -9,10 +9,10 @@ const config: Config = {
         surface: "#0b0d0e",
         line: "rgba(255,255,255,0.08)",
         manzanas: {
-          300: "#8ee6a1",
-          400: "#5fd97e",
-          500: "#34c759",
-          600: "#28a648",
+          300: "#ffb02e",
+          400: "#ff7f11",
+          500: "#e0301e",
+          600: "#c22214",
         },
       },
       fontFamily: {

@@ -116,7 +116,7 @@ function InstallChip() {
 
 function TerminalCard() {
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#161617] text-left shadow-[0_60px_140px_-40px_rgba(0,0,0,0.9),0_0_80px_-30px_rgba(52,199,89,0.25)]">
+    <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#161617] text-left shadow-[0_60px_140px_-40px_rgba(0,0,0,0.9),0_0_80px_-30px_rgba(224,48,30,0.25)]">
       <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
         <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
         <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
@@ -131,7 +131,7 @@ time=02:17:09 level=INFO msg="manzanasd listening" addr=:7433 protocol=v0
 
 $ ./bin/manzanas lease acquire --labels ios26 --agent claude-1
 `}</code>
-        <code className="text-[#34c759]">{`lease lse_9f2 active on iPhone 17 Pro (ttl 300s)`}</code>
+        <code className="text-[#e0301e]">{`lease lse_9f2 active on iPhone 17 Pro (ttl 300s)`}</code>
         <code>{`
 
 $ ./bin/manzanas lease acquire --labels ios26 --agent codex-2

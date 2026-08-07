@@ -11,13 +11,13 @@ export default function Footer() {
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(720px 380px at 50% 108%, rgba(52,199,89,0.1), transparent 70%)",
+              "radial-gradient(720px 380px at 50% 108%, rgba(224,48,30,0.1), transparent 70%)",
           }}
           aria-hidden
         />
         <div className="relative mx-auto max-w-[820px] px-6 text-center">
           <Reveal>
-            <AppleLeaf className="mx-auto h-9 w-9 text-[#248a3d]" />
+            <AppleLeaf className="mx-auto h-9 w-9 text-[#c22214]" />
             <h2 className="headline headline-xl mx-auto mt-8 text-[40px] sm:text-[56px]">
               Open source.
               <br />
@@ -52,7 +52,7 @@ export default function Footer() {
       <footer className="border-t border-[#d2d2d7] bg-white">
         <div className="mx-auto flex max-w-[1200px] flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row">
           <div className="flex items-center gap-2">
-            <AppleLeaf className="h-4 w-4 text-[#248a3d]" />
+            <AppleLeaf className="h-4 w-4 text-[#c22214]" />
             <span className="text-xs font-semibold text-[#1d1d1f]">manzanas</span>
             <span className="text-xs text-[#6e6e73]">· MIT License</span>
           </div>

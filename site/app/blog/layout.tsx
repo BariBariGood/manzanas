@@ -42,7 +42,7 @@ export default function BlogLayout({
       <footer className="border-t border-[#d2d2d7] bg-white">
         <div className="mx-auto flex max-w-[720px] items-center justify-between px-6 py-8">
           <div className="flex items-center gap-2">
-            <AppleLeaf className="h-4 w-4 text-[#248a3d]" />
+            <AppleLeaf className="h-4 w-4 text-[#c22214]" />
             <span className="text-xs font-semibold text-[#1d1d1f]">manzanas</span>
             <span className="text-xs text-[#6e6e73]">· MIT License</span>
           </div>

@@ -143,7 +143,8 @@ See `proto/PROTOCOL.md` §7:
 - `GET /v0/journal` — list runs.
 - `GET /v0/journal/{run}?from_seq=&limit=` — paginated entries + meta.
 - `GET /v0/journal/{run}/artifacts/{path}` — fetch an artifact.
-- `POST /v0/journal/{run}/artifacts?name=&kind=` — ingest an artifact.
+- `POST /v0/journal/{run}/artifacts?name=&kind=` — ingest an artifact
+  (`manzanas journal upload RUN_ID FILE...`).
 - `GET /v0/journal/{run}/export.md` — PR-comment-ready markdown evidence
   (run metadata, action table, artifact list).
 - WS `journal.tail` — replay from `from_seq`, then live entries as

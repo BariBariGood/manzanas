@@ -58,7 +58,7 @@ export default function Quickstart() {
             <Reveal key={s.n} delay={i * 0.05}>
               <div className="grid items-start gap-6 md:grid-cols-[240px_1fr] md:gap-10">
                 <div>
-                  <p className="font-mono text-[13px] font-semibold text-[#248a3d]">
+                  <p className="font-mono text-[13px] font-semibold text-[#c22214]">
                     {s.n}
                   </p>
                   <h3 className="headline mt-1 text-[22px]">{s.title}</h3>

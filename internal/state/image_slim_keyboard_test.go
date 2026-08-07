@@ -39,8 +39,8 @@ func TestSlimProfileFileKeyboardSafe(t *testing.T) {
 			safe:    false,
 		},
 		{
-			name:    "current fleet ivan-qa shape",
-			content: `{"name":"ivan-qa","except":["store","web","photos"],"keep":["com.apple.akd","com.apple.devicecheckd"]}`,
+			name:    "current fleet agent-qa shape",
+			content: `{"name":"agent-qa","except":["store","web","photos"],"keep":["com.apple.akd","com.apple.devicecheckd"]}`,
 			safe:    false,
 		},
 		{

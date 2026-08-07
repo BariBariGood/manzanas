@@ -8,6 +8,11 @@ A Mac daemon for multi-agent iOS simulator fleet orchestration: leases,
 actions, streaming, deterministic state, and an exportable run journal for
 AI agents (and humans) sharing simulators.
 
+https://github.com/user-attachments/assets/b8eb78e0-52b4-439b-ae10-921b4373abda
+
+*The launch film — leases, actions, live streaming, warm pools, the broker,
+and the run journal in 52 seconds. Sound on.*
+
 `manzanasd` runs on each Mac host and owns everything stateful — the
 simulator registry, the lease table, the warm pool, action backends,
 streamers, golden images, and the run journal. Clients (`manzanas` CLI, MCP
@@ -24,12 +29,6 @@ and export the run journal as PR-ready evidence.*
 
 **Website: [manzanasd.vercel.app](https://manzanasd.vercel.app)** (source in
 [`site/`](site/)).
-
-![manzanas demo: lease, warm tap, screenshot, live view, journal export](docs/assets/demo.webp)
-
-*A full agent loop from a Linux box: lease → warm tap (~180 ms over the
-network, ~50 ms on-host) → screenshot → journal `export.md` — with the
-live `/view` MJPEG stream of the simulator on the right.*
 
 ## Install
 

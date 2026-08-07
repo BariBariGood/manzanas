@@ -69,11 +69,11 @@ export default function Architecture() {
 function Wire() {
   return (
     <div className="flex flex-col items-center py-1" aria-hidden>
-      <span className="h-6 w-px bg-gradient-to-b from-transparent via-[#248a3d] to-transparent" />
-      <span className="font-mono text-[10px] font-semibold text-[#248a3d]">
+      <span className="h-6 w-px bg-gradient-to-b from-transparent via-[#c22214] to-transparent" />
+      <span className="font-mono text-[10px] font-semibold text-[#c22214]">
         HTTP + WS · /v0 · JSON
       </span>
-      <span className="h-6 w-px bg-gradient-to-b from-transparent via-[#248a3d] to-transparent" />
+      <span className="h-6 w-px bg-gradient-to-b from-transparent via-[#c22214] to-transparent" />
     </div>
   );
 }
@@ -117,7 +117,7 @@ function MobileBox({
 }
 
 function Diagram() {
-  const green = "#248a3d";
+  const green = "#c22214";
   const dim = "#424245";
   const dimmer = "#86868b";
 
@@ -182,7 +182,7 @@ function Diagram() {
       </text>
       {daemonRows.map(([name, desc], i) => (
         <g key={name}>
-          <rect x="398" y={114 + i * 50} width="286" height="38" rx="12" fill="#eef7f0" />
+          <rect x="398" y={114 + i * 50} width="286" height="38" rx="12" fill="#fdf1e7" />
           <text x="414" y={138 + i * 50} fill={green} fontSize="12" fontWeight="600" fontFamily="ui-monospace, SF Mono, Menlo, monospace">
             {name}
           </text>
@@ -207,11 +207,11 @@ function Diagram() {
           width="76"
           height="150"
           rx="16"
-          fill={i === 0 ? "#eef7f0" : "#f5f5f7"}
+          fill={i === 0 ? "#fdf1e7" : "#f5f5f7"}
           stroke="rgba(0,0,0,0.05)"
         />
       ))}
-      <rect x="796" y="132" width="60" height="98" rx="8" fill="rgba(36,138,61,0.12)" />
+      <rect x="796" y="132" width="60" height="98" rx="8" fill="rgba(194,34,20,0.12)" />
       <circle cx="826" cy="248" r="5" fill="none" stroke={green} strokeOpacity="0.5" />
       <text x="833" y="316" textAnchor="middle" fill={dimmer} fontSize="11.5" fontFamily="-apple-system, Inter, sans-serif">
         leased · queued · idle
