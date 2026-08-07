@@ -14,8 +14,8 @@ class Manzanasd < Formula
   desc "Mac daemon for multi-agent iOS simulator fleet orchestration"
   homepage "https://github.com/BariBariGood/manzanas"
   url "https://github.com/BariBariGood/manzanas.git",
-      tag:      "v0.2.0",
-      revision: "3f7df3e0a2c6dc6c46674513de9c82d59067c135"
+      tag:      "v0.3.0",
+      revision: "4216f8447a7c81547d11f8b40297e016c91044f9"
   license "MIT"
   head "https://github.com/BariBariGood/manzanas.git", branch: "main"
 
