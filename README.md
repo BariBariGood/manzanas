@@ -8,7 +8,7 @@ A Mac daemon for multi-agent iOS simulator fleet orchestration: leases,
 actions, streaming, deterministic state, and an exportable run journal for
 AI agents (and humans) sharing simulators.
 
-https://github.com/user-attachments/assets/b8eb78e0-52b4-439b-ae10-921b4373abda
+https://github.com/user-attachments/assets/17d35f28-9935-436e-96fd-4e4458d6a7a1
 
 *The launch film — leases, actions, live streaming, warm pools, the broker,
 and the run journal in 52 seconds. Sound on.*
