@@ -64,6 +64,6 @@ changelog:
 release:
   github:
     owner: BariBariGood
-    name: manzanas-private
+    name: manzanas
   draft: false
   prerelease: auto
