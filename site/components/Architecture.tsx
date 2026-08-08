@@ -56,7 +56,7 @@ export default function Architecture() {
             <MobileBox
               eyebrow="SIMULATORS"
               title="iOS simulators"
-              subtitle="leased · queued · idle — devices in v0.2"
+              subtitle="leased · queued · idle — sims + devices"
               rows={[]}
             />
           </div>
@@ -217,7 +217,7 @@ function Diagram() {
         leased · queued · idle
       </text>
       <text x="833" y="352" textAnchor="middle" fill={dimmer} fontSize="11.5" fontFamily="-apple-system, Inter, sans-serif">
-        devices in v0.2
+        sims + devices
       </text>
     </svg>
   );

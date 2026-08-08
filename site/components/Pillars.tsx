@@ -52,7 +52,7 @@ export default function Pillars() {
               <h3 className="headline text-[28px]">Live streaming</h3>
               <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
                 Watch any simulator live in your browser while an agent
-                drives it. MJPEG today; H.264 in v0.2.
+                drives it. MJPEG live view in the browser; per-lease H.264 recordings land in the journal.
               </p>
               <div className="mt-auto overflow-hidden rounded-xl bg-[#1d1d1f] p-4 pt-8">
                 <div className="flex items-center gap-2 font-mono text-[11px] text-white/70">
@@ -135,10 +135,10 @@ export default function Pillars() {
         <Reveal delay={0.1}>
           <div className="tile mx-auto mt-12 max-w-[640px] px-8 py-8 text-center sm:px-12">
             <p className="headline text-[22px] sm:text-[24px]">
-              Sims first. Devices next.
+              Sims and devices. One API.
             </p>
             <p className="copy-secondary mt-2 text-[16px] leading-relaxed">
-              Simulators today. Physical devices in v0.2 — same API.
+              Simulators and physical iPhones (devicectl + WebDriverAgent) — same API.
             </p>
           </div>
         </Reveal>
