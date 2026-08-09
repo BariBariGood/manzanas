@@ -116,12 +116,13 @@ elements and acts on them, so the agent never computes coordinates):
 
 | tool | what it does |
 |---|---|
-| `ui_tree` | Compact structured accessibility tree (roles, labels, values, ids, frames, interactability) plus a stable tree hash for cheap change detection. The source of truth for matchers. |
+| `ui_tree` | Compact structured accessibility tree (roles, labels, values, ids, frames, interactability) plus a stable tree hash for cheap change detection. The source of truth for matchers. Trim big screens with `format:"compact"` (one line per element with stable `[i]` indexes), `interactive_only`, `roles`, `scope` (one subtree by predicate), or `exclude_system_chrome`; the hash always digests the full tree. |
 | `tap_element` | Find an element by matcher and tap it, polling until it appears. |
 | `type_into_element` | Find an element, tap to focus, and type text into it in one call. |
 | `scroll_to_element` | Scroll (bounded swipes) until the matched element is visible on screen; distinguishes "never in the tree" from "matched but stuck off screen". |
 | `wait_for_element` | Wait until a matching element appears (or disappears with `absent`). |
 | `wait_tree_stable` | Wait until the screen stops changing (animations/loads settled). |
+| `audit` | Deterministic UI-quality checks over the current tree → findings (evidence, not verdicts) + annotated screenshot, both journaled. See [The audit tool](#the-audit-tool-deterministic-ui-checks). |
 
 Matchers, shared by all element tools: `label` (visible text, substring),
 `id` (accessibility identifier / testID, exact), `role` (Button, Cell,
@@ -132,6 +133,145 @@ elements match, the daemon ranks exact text over substring hits,
 interactable elements over static text and containers, and smaller frames
 over larger, so the actual control beats a container whose label happens
 to contain the text.
+
+## The audit tool (deterministic UI checks)
+
+`audit` inspects one accessibility-tree observation with deterministic
+geometry checks and returns **findings** — measured evidence, never
+pass/fail verdicts. Run it instead of eyeballing screenshots or
+hand-measuring `ui_tree` frames; you (the agent) decide which findings
+matter for the app under test.
+
+Checks (select a subset with `checks`, default all):
+
+| check | evidence produced |
+|---|---|
+| `touch_target` | interactive elements smaller than `min_touch_pt` (default 44x44pt) in either dimension |
+| `clipping` | frames extending beyond the screen bounds or beyond a non-scrolling parent's bounds, with per-edge overflow in points |
+| `alignment` | sibling edges almost-but-not-quite aligned: deltas within `alignment_tolerance_pt` (default 4pt) — larger deltas are treated as intentional layout |
+| `spacing` | gaps in sibling rows/columns deviating from the group's median by more than `spacing_tolerance_pt` (default 4pt), with the full gap list |
+| `safe_area` | interactive elements intruding into the safe-area insets (`safe_area_insets` override, or a device-class heuristic) |
+| `missing_labels` | interactive elements with no label, value, or placeholder — nothing a screen reader or an element matcher can use |
+
+Each finding carries the check name, a `ref` (`F1`, `F2`, ...), the
+element's role/label/id/frame, the measured values, and an evidence
+sentence. The same refs are drawn as labeled red boxes on an annotated
+screenshot. Both the findings JSON and the annotated PNG are journaled as
+run artifacts and appear in `journal_export`, so audit evidence survives
+into PR-ready exports.
+
+Noise control: dense grids of repeated same-size controls (keyboards,
+emoji pickers, calendar day cells) are detected and suppressed
+(`suppressed_elements` reports how many); findings are capped per check
+with an `elided` count when a screen is pathological. System chrome the
+OS draws — scroll-indicator pseudo-elements (UIKit-labeled "Vertical/Horizontal
+scroll bar…" Slider/ScrollBar nodes, plus thin unlabeled elongated
+ones), the status bar, and the keyboard — is also suppressed by default
+(`include_system_chrome: true` restores it, though individual keyboard
+keys remain under the dense-group rule), and `touch_target` withholds
+small controls whose frame is fully covered by an enclosing ≥min-size
+tappable Cell or Button row (stock Settings' ~28pt row buttons and
+chevrons — the row itself is the touch target; count reported as
+`suppressed_covered_controls`, restore with
+`include_covered_controls: true`). The heuristics are role/id/frame
+based and deterministic — see `internal/actions/chrome.go`.
+
+Scoping: pass any element matcher (flat fields or `predicate`) to audit
+only the matched element's subtree, or `region` (`{x, y, w, h}` in
+points) to audit only elements centred in that rectangle.
+
+```jsonc
+// audit just the visible form, tighter touch-target rule
+{"lease_id": "lse_...", "checks": ["touch_target", "missing_labels"],
+ "label": "Sign up", "min_touch_pt": 48}
+```
+
+CLI equivalent: `manzanas audit --lease lse_... [-o annotated.png]
+[--checks touch_target,clipping] [--region X,Y,W,H] [matcher flags]
+[--include-system-chrome] [--include-covered-controls]`.
+
+## Trimming ui_tree on busy screens
+
+`ui_tree` accepts opt-in filters that cut payload size server-side; they
+compose, ordering stays deterministic (depth-first), and `hash` always
+digests the full unfiltered tree:
+
+```jsonc
+// one line per element, only interactive ones, app content only
+{"lease_id": "lse_...", "format": "compact",
+ "interactive_only": true, "exclude_system_chrome": true}
+// just the buttons inside one table
+{"lease_id": "lse_...", "roles": ["Button"], "scope": {"type": "Table"}}
+```
+
+`format: "compact"` returns `tree_compact` — one depth-indented line per
+element (`[12] Button "Save" (20,100 100x44) interactive`) with a stable
+depth-first `[i]` index over the returned tree, the same order in which
+the predicate `index` field picks candidates. When filters or `scope`
+are active, `total_elements` / `returned_elements` report the reduction.
+CLI: `manzanas observe --compact --interactive-only --roles Button,Cell
+--scope '{"type":"Table"}' --exclude-system-chrome`.
+
+## Log correlation (capture_logs)
+
+`tap_element`, `type_into_element`, and `scroll_to_element` accept
+`capture_logs: true` (plus optional `log_process: "MyApp"`) to collect
+the simulator's `os_log` lines emitted during the action window. The
+lines come back as `result.logs` and are journaled as an
+`action-logs.txt` artifact next to the step's journal entry, so a
+journal export correlates what the app logged with each action.
+Best-effort (a collection failure degrades to `log_error`) and
+simulator-only. CLI: `--capture-logs [--log-process NAME]`.
+
+## The predicate DSL (strict matching)
+
+Every element tool also accepts a `predicate` object — a strict,
+composable alternative to the flat matcher fields above (use one form
+per call, never both). Where the flat matcher silently picks the
+best-ranked hit, a predicate must resolve to **exactly one** element:
+several matches without an `index` fail with `ambiguous_match` and a
+listing of every candidate (role, label, id, frame), and zero matches
+poll until `timeout_ms` like any other matcher miss. Prefer predicates
+when a screen has repeated controls (two "Delete" buttons, one per row)
+and a silent best-match pick would be a guess.
+
+Fields (all optional, at least one required; `index` alone is not a
+selector):
+
+| field | matches |
+|---|---|
+| `text` | the element's visible text (label or value), **exact** |
+| `text_contains` | visible text, substring |
+| `text_regex` | visible text, RE2 regular expression |
+| `type` | the element type/role, exact (`Button`, `Cell`, `TextField`, ...) |
+| `accessibility_id` | the accessibility identifier / testID, exact |
+| `bounds_hint` | where the element's centre sits on screen: `top_half`, `bottom_half`, `left_half`, `right_half`, or `center` (the middle half in both axes) |
+| `near` | `{predicate, direction, max_distance?}` — the element lies `left`/`right`/`above`/`below` of another **uniquely**-resolved element, overlapping its row/column, optionally within `max_distance` points centre-to-centre |
+| `parent_of` | a predicate on a descendant; resolves the enclosing element — the direct parent by default, or the matching ancestor when combined with other fields (e.g. `type: "Cell"`) |
+| `index` | 0-based pick among the remaining matches, in tree order — the explicit disambiguator |
+
+`text`/`text_contains`/`text_regex` are mutually exclusive. `near` and
+`parent_of` nest full predicates (up to 4 levels); an ambiguous inner
+predicate fails the whole resolution with the same candidate listing.
+
+```jsonc
+// The Delete button in Alice's row, not Bob's:
+{"predicate": {"type": "Button", "text": "Delete",
+               "near": {"predicate": {"text": "Alice"}, "direction": "right"}}}
+
+// The cell that contains the text "Alice":
+{"predicate": {"type": "Cell", "parent_of": {"text": "Alice"}}}
+
+// The second "Save" button (explicitly, not silently):
+{"predicate": {"text": "Save", "index": 1}}
+
+// The text field in the top half of the screen:
+{"predicate": {"type": "TextField", "bounds_hint": "top_half"}}
+```
+
+On `ambiguous_match`, read the candidate listing in the error, then
+either tighten the predicate (add `type`, `accessibility_id`,
+`bounds_hint`, or `near`) or pick a candidate with `index`.
 
 Raw tools (fallbacks when there is no usable accessibility element):
 
@@ -213,6 +353,16 @@ agent → tap_element {"lease_id":"lse_9f2","id":"save-button"}
 agent → lease_release {"lease_id":"lse_9f2"}
       ← {"released":true}
 ```
+
+When a matcher times out but elements matching it exist outside the
+viewport, the error appends an off-screen hint — e.g. `2 matching
+element(s) exist off-screen: Button label="Save" ... (below the
+viewport) — scroll to bring them into view (scroll_to_element)` — and
+ambiguous DSL matches mark off-screen candidates with `(off-screen)`.
+Candidates that are on screen but excluded by the matcher's own
+`in_frame`/`bounds_hint` are reported separately (`... on screen but
+outside the requested in_frame/bounds_hint region ... — relax or adjust
+the region`), so scroll advice only appears when scrolling can help.
 
 Note the recovery pattern: a matcher miss is not a dead end — `ui_tree`
 shows what is actually on screen, and the `id` matcher is the most

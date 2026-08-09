@@ -27,26 +27,9 @@ func handleScreenshot(ctx context.Context, b *AXeBackend, udid string, p map[str
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp(b.tempDir, "manzanasd-shot-")
-	if err != nil {
-		return nil, internal("cannot create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "screen.png")
-
-	backend := "axe"
-	if b.AXeAvailable() {
-		_, err = b.axe(ctx, udid, "screenshot", "--output", path)
-	} else {
-		backend = "simctl"
-		_, err = b.simctl(ctx, "io", udid, "screenshot", path)
-	}
+	img, backend, err := b.capturePNG(ctx, udid)
 	if err != nil {
 		return nil, err
-	}
-	img, err := os.ReadFile(path)
-	if err != nil {
-		return nil, internal("screenshot file unreadable: %v", err)
 	}
 	if format != "png" || maxDim > 0 {
 		img, err = imgutil.Transcode(img, format, quality, maxDim)
@@ -66,6 +49,33 @@ func handleScreenshot(ctx context.Context, b *AXeBackend, udid string, p map[str
 	// stripping the base64 payload from the wire response.
 	res[format+"_base64"] = base64.StdEncoding.EncodeToString(img)
 	return res, nil
+}
+
+// capturePNG captures the target's screen as native-resolution PNG bytes,
+// reporting which tool produced it ("axe" or "simctl").
+func (b *AXeBackend) capturePNG(ctx context.Context, udid string) ([]byte, string, error) {
+	dir, err := os.MkdirTemp(b.tempDir, "manzanasd-shot-")
+	if err != nil {
+		return nil, "", internal("cannot create temp dir: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "screen.png")
+
+	backend := "axe"
+	if b.AXeAvailable() {
+		_, err = b.axe(ctx, udid, "screenshot", "--output", path)
+	} else {
+		backend = "simctl"
+		_, err = b.simctl(ctx, "io", udid, "screenshot", path)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	img, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", internal("screenshot file unreadable: %v", err)
+	}
+	return img, backend, nil
 }
 
 // screenshotParams reads the optional format/quality/max_dim payload

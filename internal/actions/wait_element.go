@@ -15,7 +15,7 @@ func handleWaitForElement(ctx context.Context, b *AXeBackend, udid string, p map
 }
 
 func elemWaitFor(ctx context.Context, d elementDriver, udid string, p map[string]any) (map[string]any, error) {
-	pr, err := predicateFromPayload(p)
+	pr, err := matcherFromPayload(p)
 	if err != nil {
 		return nil, err
 	}
@@ -31,32 +31,41 @@ func elemWaitFor(ctx context.Context, d elementDriver, udid string, p map[string
 
 	var found *Node
 	var nodes []*Node
+	var viewport *Frame
 	polls, elapsed, err := pollUntil(ctx, timeout, interval, func(ctx context.Context) error {
 		obs, err := d.observeOnce(ctx, udid, refresh)
 		if err != nil {
 			return err
 		}
 		nodes = obs.nodes
-		hit := pr.findBest(obs.nodes, obs.viewport)
+		viewport = obs.viewport
+		hit, rerr := pr.resolve(obs.nodes, obs.viewport)
 		if absent {
-			if hit != nil {
+			// Ambiguity means several elements still match — for an
+			// absent-wait that is simply "still present", keep polling.
+			if hit != nil || (rerr != nil && !errors.Is(rerr, errNoMatch)) {
 				return errNotYet
 			}
 			return nil
 		}
-		if hit == nil {
-			return errNotYet
+		if rerr != nil {
+			if errors.Is(rerr, errNoMatch) {
+				return errNotYet
+			}
+			// A hard resolution error (e.g. ambiguous_match) stops the
+			// poll: more waiting cannot disambiguate it.
+			return rerr
 		}
 		found = hit
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, errNotYet) || errors.Is(err, context.DeadlineExceeded) {
-			verb := "appear"
 			if absent {
-				verb = "disappear"
+				return nil, timeoutErr("element (%s) did not disappear within the %s budget (%d poll(s), %s elapsed)", pr, timeout, polls, elapsed.Round(time.Millisecond))
 			}
-			return nil, timeoutErr("element (%s) did not %s within the %s budget (%d poll(s), %s elapsed)", pr, verb, timeout, polls, elapsed.Round(time.Millisecond))
+			return nil, timeoutErr("element (%s) did not appear within the %s budget (%d poll(s), %s elapsed)%s",
+				pr, timeout, polls, elapsed.Round(time.Millisecond), offscreenHint(pr, nodes, viewport))
 		}
 		return nil, err
 	}

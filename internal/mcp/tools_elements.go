@@ -31,6 +31,8 @@ func matcherProps() map[string]map[string]any {
 			"description": "Match by placeholder text (also matches an empty field's value), substring by default. Best way to find empty text fields."},
 		"exact": {"type": "boolean", "default": false,
 			"description": "Require label/value/placeholder to match exactly instead of by substring."},
+		"predicate": {"type": "object",
+			"description": "Structured predicate — a strict alternative to the flat matcher fields above (do not combine with label/role/value/id/placeholder). Fields: text (exact visible text), text_contains (substring), text_regex (RE2 regex) — at most one text form; type (element role, e.g. Button, Cell); accessibility_id (testID, exact); bounds_hint (top_half | bottom_half | left_half | right_half | center — where on screen the element sits); near ({predicate, direction: left|right|above|below, max_distance?} — the element lies in that direction from another uniquely-matching element, e.g. the TextField right of the \"Email\" label); parent_of (a predicate on a descendant; resolves the enclosing element, e.g. the Cell containing text \"Alice\"); index (0-based pick when several elements legitimately match). Unlike the flat matcher there is NO best-match ranking: several matches without index fail with ambiguous_match listing every candidate — tighten the predicate or add index. Example: {\"type\":\"Button\",\"text\":\"Delete\",\"near\":{\"predicate\":{\"text\":\"Alice\"},\"direction\":\"right\"}}."},
 		"timeout_ms": {"type": "integer", "default": 10000,
 			"description": "How long to keep polling for a match before failing, in milliseconds (max 120000)."},
 		"interval_ms": {"type": "integer", "default": 500,
@@ -41,7 +43,7 @@ func matcherProps() map[string]map[string]any {
 // matcherKeys are the argument names copied verbatim into the action
 // payload (arg names match the daemon payload fields 1:1).
 var matcherKeys = []string{"label", "role", "value", "id", "placeholder",
-	"exact", "timeout_ms", "interval_ms"}
+	"exact", "predicate", "timeout_ms", "interval_ms"}
 
 // elementPayload copies the matcher arguments plus any extra keys into a
 // daemon action payload.
@@ -120,6 +122,8 @@ func matcherHint(kind string, err error) error {
 			return fmt.Errorf("%s; call ui_tree to see what is on screen now — the element is probably on a different screen", ae.Message)
 		}
 		return fmt.Errorf("%s; call ui_tree to see what is on screen now and adjust the matcher (or use scroll_to_element if the element is further down the page)", ae.Message)
+	case "ambiguous_match":
+		return fmt.Errorf("%s; add index to the predicate or tighten it (type, accessibility_id, bounds_hint, near) so exactly one candidate matches", ae.Message)
 	case "off_viewport":
 		if kind == "scroll_to_element" {
 			return fmt.Errorf("%s; call ui_tree to inspect the layout — do not retry the same scroll", ae.Message)
@@ -133,7 +137,7 @@ func toolTapElement() Tool {
 	return Tool{
 		Name:        "tap_element",
 		Description: "Find an element by matcher (label/id/role/value/placeholder) and tap it, in one call. Polls until the element appears, so use it right after navigation without a separate wait. Prefer this over observe+tap coordinates. Fails with a hint if nothing matches within timeout_ms.",
-		InputSchema: schema(mergeProps(matcherProps(), map[string]map[string]any{
+		InputSchema: schema(mergeProps(mergeProps(matcherProps(), logProps()), map[string]map[string]any{
 			"anchor": {"type": "string", "enum": []string{"start", "center", "end"}, "default": "center",
 				"description": "Where on the element's frame to tap: center (default), or a point near the leading (start) / trailing (end) edge — useful for an inline link at the end of a sentence."},
 		}), "lease_id"),
@@ -142,7 +146,8 @@ func toolTapElement() Tool {
 			if err != nil {
 				return nil, err
 			}
-			return dispatchElement(ctx, s, "tap_element", leaseID, elementPayload(args, "anchor"))
+			return dispatchElement(ctx, s, "tap_element", leaseID,
+				elementPayload(args, "anchor", "capture_logs", "log_process"))
 		},
 	}
 }
@@ -151,7 +156,7 @@ func toolTypeIntoElement() Tool {
 	return Tool{
 		Name:        "type_into_element",
 		Description: "Find an element by matcher, tap it to focus it, then type text into it — all in one call. Use placeholder to match empty text fields. strategy \"paste\" delivers the text in one shot (best for long or special-character text).",
-		InputSchema: schema(mergeProps(matcherProps(), map[string]map[string]any{
+		InputSchema: schema(mergeProps(mergeProps(matcherProps(), logProps()), map[string]map[string]any{
 			"text": {"type": "string", "description": "The text to type into the matched element."},
 			"anchor": {"type": "string", "enum": []string{"start", "center", "end"}, "default": "center",
 				"description": "Where on the element's frame to tap when focusing it: center (default), or a point near the leading (start) / trailing (end) edge."},
@@ -169,7 +174,8 @@ func toolTypeIntoElement() Tool {
 				return nil, err
 			}
 			return dispatchElement(ctx, s, "type_into_element", leaseID,
-				elementPayload(args, "text", "strategy", "require_focus", "anchor"))
+				elementPayload(args, "text", "strategy", "require_focus", "anchor",
+					"capture_logs", "log_process"))
 		},
 	}
 }
@@ -178,7 +184,7 @@ func toolScrollToElement() Tool {
 	return Tool{
 		Name:        "scroll_to_element",
 		Description: "Scroll until an element matching the matcher is visible on screen, with bounded swipe attempts. Use it when tap_element reports the element is outside the viewport, or when the target is further down a list/page. Errors say whether the element was never in the tree (wrong screen) or matched but could not be brought into view.",
-		InputSchema: schema(mergeProps(matcherProps(), map[string]map[string]any{
+		InputSchema: schema(mergeProps(mergeProps(matcherProps(), logProps()), map[string]map[string]any{
 			"direction": {"type": "string", "enum": []string{"down", "up", "left", "right"}, "default": "down",
 				"description": "Which content edge to reveal while the element is not on screen yet: down scrolls toward content below the fold (default). Once the element is in the tree, swipes automatically move toward it."},
 			"max_scrolls": {"type": "integer", "default": 8,
@@ -192,8 +198,19 @@ func toolScrollToElement() Tool {
 				return nil, err
 			}
 			return dispatchElement(ctx, s, "scroll_to_element", leaseID,
-				elementPayload(args, "direction", "max_scrolls"))
+				elementPayload(args, "direction", "max_scrolls", "capture_logs", "log_process"))
 		},
+	}
+}
+
+// logProps are the opt-in log-capture schema properties shared by the
+// actions that support capture_logs.
+func logProps() map[string]map[string]any {
+	return map[string]map[string]any{
+		"capture_logs": {"type": "boolean", "default": false,
+			"description": "Collect the simulator's os_log lines emitted during the action window and return them as result.logs (also journaled as an artifact next to this step). Simulators only. Use log_process to cut noise."},
+		"log_process": {"type": "string",
+			"description": "Only capture log lines from this process name (the app's executable name, e.g. \"MobileSafari\"). Setting it implies capture_logs."},
 	}
 }
 

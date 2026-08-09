@@ -150,6 +150,86 @@ func TestWarmObserveCompactsHelperTree(t *testing.T) {
 	}
 }
 
+func TestWarmLogCaptureRoutesColdWhenAvailable(t *testing.T) {
+	ff := &fakeFactory{}
+	cold := &coldFake{}
+	b := warmFor(t, ff, cold)
+
+	// log_process alone implies capture and routes cold (coldAXe is true
+	// for non-AXe cold backends).
+	_, err := b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "tap", Payload: map[string]any{
+			"x": 5, "y": 6, "log_process": "MyApp"}})
+	if err != nil {
+		t.Fatalf("tap: %v", err)
+	}
+	if len(cold.kinds) != 1 || cold.kinds[0] != "tap" {
+		t.Fatalf("capture_logs tap must route cold, got %v", cold.kinds)
+	}
+	if ff.spawnCount() != 0 {
+		t.Fatal("cold-routed tap must not use the warm helper")
+	}
+}
+
+func TestWarmLogCaptureDegradesWithoutColdAXe(t *testing.T) {
+	ff := &fakeFactory{}
+	cold := &coldFake{}
+	b := warmFor(t, ff, cold)
+	b.coldAXe = false
+
+	res, err := b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "tap", Payload: map[string]any{
+			"x": 5, "y": 6, "capture_logs": true}})
+	if err != nil {
+		t.Fatalf("tap: %v", err)
+	}
+	if len(cold.kinds) != 0 {
+		t.Fatalf("without cold AXe the tap must run warm, got %v", cold.kinds)
+	}
+	le, _ := res.Result["log_error"].(string)
+	if !strings.Contains(le, "log capture unavailable") {
+		t.Fatalf("log_error = %q, want unavailable explanation", le)
+	}
+}
+
+func TestWarmObserveCompactFormatAndFilters(t *testing.T) {
+	raw := `[{"AXLabel":"Login","type":"Button","frame":{"x":10,"y":20,"width":100,"height":40},"enabled":true,"AXFrame":""},` +
+		`{"AXLabel":"Title","type":"StaticText","frame":{"x":10,"y":60,"width":100,"height":20}}]`
+	ff := &fakeFactory{configure: func(h *fakeHelper) {
+		h.results["describe_ui"] = map[string]any{"raw": raw}
+	}}
+	cold := &coldFake{}
+	b := warmFor(t, ff, cold)
+
+	res, err := b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "observe", Payload: map[string]any{
+			"format": "compact", "roles": []any{"Button"}}})
+	if err != nil {
+		t.Fatalf("observe: %v", err)
+	}
+	compact, ok := res.Result["tree_compact"].(string)
+	if !ok || !strings.Contains(compact, `[0] Button "Login"`) {
+		t.Fatalf("tree_compact = %v", res.Result["tree_compact"])
+	}
+	if strings.Contains(compact, "Title") {
+		t.Fatalf("role filter not applied on warm path: %q", compact)
+	}
+	if _, present := res.Result["tree"]; present {
+		t.Fatal("compact format must replace the nested tree")
+	}
+	if res.Result["total_elements"] != 2 || res.Result["returned_elements"] != 1 {
+		t.Fatalf("counts = %v/%v", res.Result["total_elements"], res.Result["returned_elements"])
+	}
+	if len(cold.kinds) != 0 {
+		t.Fatalf("filtered observe must not go cold: %v", cold.kinds)
+	}
+
+	if _, err := b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "observe", Payload: map[string]any{"format": "yaml"}}); err == nil {
+		t.Fatal("invalid format must be rejected on the warm path")
+	}
+}
+
 func TestWarmObserveRefreshRunsCold(t *testing.T) {
 	// refresh:true bypasses the resident helper (whose long-lived AX
 	// connection can serve a stale snapshot) and observes cold instead.

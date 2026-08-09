@@ -190,6 +190,79 @@ func TestAbandonedQueuedLeaseExpires(t *testing.T) {
 	}
 }
 
+func TestPromotionExpiresSilentQueuedLease(t *testing.T) {
+	m := newTestManager(t)
+	ctx := context.Background()
+	now := time.Now()
+	m.now = func() time.Time { return now }
+
+	first, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a1", TTLSeconds: 3600})
+	q, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a2"})
+
+	// a2 wait-polls once, then its process dies: no more Get polls. When
+	// the target frees past the liveness window, the queued lease must
+	// expire instead of being granted to a dead client.
+	m.Get(q.ID)
+	now = now.Add(QueuePromoteLiveness + time.Second)
+	if _, err := m.Release(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.Get(q.ID); got.State != proto.LeaseExpired {
+		t.Fatalf("silent queued lease = %+v, want expired", got)
+	}
+	if _, leased := m.Active(first.TargetUDID); leased {
+		t.Fatal("freed target must not be held by the dead client's lease")
+	}
+	l, err := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a3"})
+	if err != nil || l.State != proto.LeaseActive {
+		t.Fatalf("next acquire = %+v %v, want active", l, err)
+	}
+}
+
+func TestPromotionSkipsSilentQueuedLeaseForLiveOne(t *testing.T) {
+	m := newTestManager(t)
+	ctx := context.Background()
+	now := time.Now()
+	m.now = func() time.Time { return now }
+
+	first, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a1", TTLSeconds: 3600})
+	dead, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a2"})
+	live, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a3"})
+
+	m.Get(dead.ID) // a2 wait-polls once, then dies
+	now = now.Add(QueuePromoteLiveness + time.Second)
+	m.Get(live.ID) // a3 keeps polling; a2 has gone silent
+	if _, err := m.Release(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.Get(dead.ID); got.State != proto.LeaseExpired {
+		t.Fatalf("silent queued lease = %+v, want expired", got)
+	}
+	if got, _ := m.Get(live.ID); got.State != proto.LeaseActive || got.TargetUDID != first.TargetUDID {
+		t.Fatalf("live queued lease = %+v, want active on %s", got, first.TargetUDID)
+	}
+}
+
+func TestPromotionGrantsNeverPolledQueuedLease(t *testing.T) {
+	m := newTestManager(t)
+	ctx := context.Background()
+	now := time.Now()
+	m.now = func() time.Time { return now }
+
+	first, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a1", TTLSeconds: 3600})
+	q, _ := m.Acquire(ctx, proto.AcquireLeaseRequest{Labels: []string{"ios26"}, AgentID: "a2"})
+
+	// A wait:false owner that has never polled keeps the plain
+	// QueueWaitTTL contract: the liveness gate must not expire it.
+	now = now.Add(QueuePromoteLiveness + time.Minute)
+	if _, err := m.Release(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.Get(q.ID); got.State != proto.LeaseActive {
+		t.Fatalf("never-polled queued lease = %+v, want active", got)
+	}
+}
+
 func TestReleaseQueuedLease(t *testing.T) {
 	m := newTestManager(t)
 	ctx := context.Background()

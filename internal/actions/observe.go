@@ -59,6 +59,14 @@ func handleObserve(ctx context.Context, b *AXeBackend, udid string, p map[string
 	if _, err := boolFlag(p, "refresh", false); err != nil {
 		return nil, err
 	}
+	format, err := observeFormat(p)
+	if err != nil {
+		return nil, err
+	}
+	filter, err := treeFilterFromPayload(p)
+	if err != nil {
+		return nil, err
+	}
 	raw, nodes, err := b.observeTree(ctx, udid)
 	if err != nil {
 		return nil, err
@@ -66,9 +74,31 @@ func handleObserve(ctx context.Context, b *AXeBackend, udid string, p map[string
 	if nodes == nil {
 		nodes = []*Node{}
 	}
+	shown, err := scopeSubtree(p, nodes, rawViewport(raw))
+	if err != nil {
+		return nil, err
+	}
+	scoped := len(shown) != len(nodes) || (len(shown) > 0 && shown[0] != nodes[0])
+	if filter.active() {
+		shown = filterNodes(shown, filter)
+	}
+	if shown == nil {
+		shown = []*Node{}
+	}
 	res := map[string]any{
-		"tree": nodes,
+		// The hash always digests the FULL tree, so change detection
+		// stays comparable whatever scope/filters/format a caller uses.
 		"hash": TreeHash(nodes),
+	}
+	if format == "compact" {
+		res["format"] = "compact"
+		res["tree_compact"] = compactTreeText(shown)
+	} else {
+		res["tree"] = shown
+	}
+	if filter.active() || scoped {
+		res["total_elements"] = countNodes(nodes)
+		res["returned_elements"] = countNodes(shown)
 	}
 	if len(nodes) == 0 {
 		// The tree stayed empty across the bounded in-daemon re-polls.
@@ -81,6 +111,21 @@ func handleObserve(ctx context.Context, b *AXeBackend, udid string, p map[string
 		res["raw"] = string(raw)
 	}
 	return res, nil
+}
+
+// observeFormat reads the optional "format" payload field: the nested
+// JSON tree (default) or the compact indexed text rendering.
+func observeFormat(p map[string]any) (string, error) {
+	format, err := enumField(p, "format")
+	if err == nil {
+		switch format {
+		case "":
+			return "json", nil
+		case "json", "compact":
+			return format, nil
+		}
+	}
+	return "", badRequest("payload field %q must be %q or %q", "format", "json", "compact")
 }
 
 // observeTree runs `axe describe-ui` and compacts it, retrying with

@@ -98,6 +98,7 @@ func NewDevice(opts ...DeviceOption) *DeviceBackend {
 var deviceUnimplementedKinds = map[string]bool{
 	"key":          true,
 	"key_sequence": true,
+	"audit":        true,
 }
 
 // Dispatch implements Backend.
@@ -278,6 +279,14 @@ func handleDeviceObserve(ctx context.Context, b *DeviceBackend, udid string, p m
 	if _, err := boolFlag(p, "refresh", false); err != nil {
 		return nil, err
 	}
+	format, err := observeFormat(p)
+	if err != nil {
+		return nil, err
+	}
+	filter, err := treeFilterFromPayload(p)
+	if err != nil {
+		return nil, err
+	}
 	xml, err := c.Source(ctx)
 	if err != nil {
 		return nil, b.wdaFail(udid, "observe", err)
@@ -289,10 +298,30 @@ func handleDeviceObserve(ctx context.Context, b *DeviceBackend, udid string, p m
 	if nodes == nil {
 		nodes = []*Node{}
 	}
+	shown, err := scopeSubtree(p, nodes, nil)
+	if err != nil {
+		return nil, err
+	}
+	scoped := len(shown) != len(nodes) || (len(shown) > 0 && shown[0] != nodes[0])
+	if filter.active() {
+		shown = filterNodes(shown, filter)
+	}
+	if shown == nil {
+		shown = []*Node{}
+	}
 	res := map[string]any{
-		"tree":    nodes,
 		"hash":    TreeHash(nodes),
 		"backend": "wda",
+	}
+	if format == "compact" {
+		res["format"] = "compact"
+		res["tree_compact"] = compactTreeText(shown)
+	} else {
+		res["tree"] = shown
+	}
+	if filter.active() || scoped {
+		res["total_elements"] = countNodes(nodes)
+		res["returned_elements"] = countNodes(shown)
 	}
 	if includeRaw {
 		res["raw"] = xml

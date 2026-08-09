@@ -35,6 +35,8 @@ type fakeDaemon struct {
 	bootStalls  bool
 	bootCalls   []string
 	leaseReqs   []proto.AcquireLeaseRequest
+	// leaseState is what acquire (and Get) report for lse_mcp; default active.
+	leaseState proto.LeaseState
 }
 
 func (f *fakeDaemon) setTargetState(s proto.TargetState) {
@@ -87,6 +89,14 @@ func newFakeDaemon() *fakeDaemon {
 		f.leaseReqs = append(f.leaseReqs, req)
 		f.mu.Unlock()
 		exp := time.Now().Add(5 * time.Minute)
+		f.mu.Lock()
+		state := f.leaseState
+		f.mu.Unlock()
+		if state == proto.LeaseQueued {
+			writeJSON(w, http.StatusCreated, proto.Lease{ID: "lse_mcp", State: proto.LeaseQueued,
+				TTLSeconds: 300, QueuePosition: 1})
+			return
+		}
 		writeJSON(w, http.StatusCreated, proto.Lease{ID: "lse_mcp", State: proto.LeaseActive,
 			TargetUDID: "UDID-1", TTLSeconds: 300, ExpiresAt: &exp})
 	})
@@ -203,7 +213,7 @@ func TestInitializeAndListTools(t *testing.T) {
 		names[tl.(map[string]any)["name"].(string)] = true
 	}
 	for _, want := range []string{"lease_acquire", "lease_release", "lease_renew", "targets",
-		"observe", "tap", "swipe", "type_text", "button", "screenshot", "app", "state",
+		"observe", "tap", "swipe", "type_text", "button", "screenshot", "audit", "app", "state",
 		"ui_tree", "tap_element", "type_into_element", "scroll_to_element",
 		"wait_for_element", "wait_tree_stable"} {
 		if !names[want] {
@@ -524,5 +534,21 @@ func TestSessionReleasesOwnedLeasesOnExit(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.released) != 1 || f.released[0] != "lse_mcp" {
 		t.Fatalf("lease not auto-released: %v", f.released)
+	}
+}
+
+// A lease still QUEUED when the session ends must be auto-released too, so
+// a dead session's queue entry never goes active and holds a target.
+func TestSessionReleasesQueuedLeaseOnExit(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	f.mu.Lock()
+	f.leaseState = proto.LeaseQueued
+	f.mu.Unlock()
+	runSession(t, f, call(1, "lease_acquire", `{"labels":["ios26"],"wait":false}`))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.released) != 1 || f.released[0] != "lse_mcp" {
+		t.Fatalf("queued lease not auto-released: %v", f.released)
 	}
 }

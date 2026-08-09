@@ -58,6 +58,10 @@ func hintFor(err error) string {
 		return "The coordinates fall outside the device screen. Call ui_tree and use " +
 			"points inside the element frames it returns, or use tap_element / " +
 			"scroll_to_element instead of raw coordinates"
+	case proto.ErrAmbiguousMatch:
+		return "The predicate matched several elements (they are listed in the error). " +
+			"Tighten it (add type, accessibility_id, bounds_hint, or near) or pick one " +
+			"deterministically with index"
 	case proto.ErrFocusRequired:
 		return "No text field has keyboard focus. Use type_into_element to focus and " +
 			"type in one step, or tap the target field first (find it with ui_tree) " +

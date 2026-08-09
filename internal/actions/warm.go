@@ -109,6 +109,23 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 	if !ok {
 		return b.cold.Dispatch(ctx, udid, req)
 	}
+	// Log capture (capture_logs) runs simctl around the action window;
+	// only the cold backend can do that, so route the whole action cold.
+	// On hosts without a cold AXe binary the action still runs warm and
+	// the missing logs degrade to log_error (best-effort contract).
+	logsUnavailable := false
+	if logKinds[req.Kind] {
+		spec, err := logCaptureFromPayload(req.Payload)
+		if err != nil {
+			return proto.ActionResult{}, err
+		}
+		if spec.enabled {
+			if b.coldAXe {
+				return b.cold.Dispatch(ctx, udid, req)
+			}
+			logsUnavailable = true
+		}
+	}
 	// Opt-in a11y evidence around HID actions, mirroring the cold path:
 	// best-effort and time-bounded (axHashTimeout each) via the resident
 	// helper, so warm and cold produce the same ax_before/ax_after fields.
@@ -154,6 +171,12 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 		if h := b.hashTree(ctx, udid); h != "" {
 			res["ax_after"] = h
 		}
+	}
+	if logsUnavailable {
+		if res == nil {
+			res = map[string]any{}
+		}
+		res["log_error"] = "log capture unavailable: no cold AXe backend on this host to run simctl around the action window"
 	}
 	return proto.ActionResult{OK: true, Result: res}, nil
 }
@@ -267,6 +290,14 @@ func (b *WarmBackend) warmObserve(ctx context.Context, udid string, p map[string
 	if err != nil {
 		return nil, err
 	}
+	format, err := observeFormat(p)
+	if err != nil {
+		return nil, err
+	}
+	filter, err := treeFilterFromPayload(p)
+	if err != nil {
+		return nil, err
+	}
 	raw, nodes, err := b.warmObserveTree(ctx, udid)
 	if err != nil {
 		return nil, err
@@ -274,9 +305,30 @@ func (b *WarmBackend) warmObserve(ctx context.Context, udid string, p map[string
 	if nodes == nil {
 		nodes = []*Node{}
 	}
+	shown, err := scopeSubtree(p, nodes, rawViewport(raw))
+	if err != nil {
+		return nil, err
+	}
+	scoped := len(shown) != len(nodes) || (len(shown) > 0 && shown[0] != nodes[0])
+	if filter.active() {
+		shown = filterNodes(shown, filter)
+	}
+	if shown == nil {
+		shown = []*Node{}
+	}
 	res := map[string]any{
-		"tree": nodes,
+		// The hash always digests the FULL tree (same as the cold path).
 		"hash": TreeHash(nodes),
+	}
+	if format == "compact" {
+		res["format"] = "compact"
+		res["tree_compact"] = compactTreeText(shown)
+	} else {
+		res["tree"] = shown
+	}
+	if filter.active() || scoped {
+		res["total_elements"] = countNodes(nodes)
+		res["returned_elements"] = countNodes(shown)
 	}
 	if len(nodes) == 0 {
 		// Same retryable signal as the cold path (see handleObserve).

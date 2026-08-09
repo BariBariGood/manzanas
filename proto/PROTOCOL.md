@@ -21,7 +21,9 @@ truth; this document describes semantics.
   `{"code": "...", "message": "..."}`. Well-known codes: `not_found`,
   `not_implemented`, `bad_request`, `lease_expired`, `no_match`,
   `target_busy`, `target_not_booted`, `stream_limit`, `viewer_limit`,
-  `stream_gone`, `timeout`, `off_viewport`, `focus_required` (`412` — a
+  `stream_gone`, `timeout`, `off_viewport`, `ambiguous_match` (`409` — a
+  structured predicate matched several elements and no `index` picked
+  one; the message lists the candidates), `focus_required` (`412` — a
   typing action with `require_focus:true` found no focused text field),
   `internal`. Two additive
   optional fields: `detail` carries actionable context when the daemon
@@ -231,7 +233,14 @@ leases — negative inside the grace window. Holders should still renew at
 TTL extension. Queued leases also expire if their owner
 does not poll `GET /v0/leases/{id}` (or WS `leases.get`) for 30 minutes, so
 abandoned requests don't block the queue; watching events alone does not
-keep a queued lease alive.
+keep a queued lease alive. Additive liveness rule for wait-polling owners:
+once a queued lease's owner has polled `GET /v0/leases/{id}` at least once,
+going silent for more than 30 seconds marks it abandoned — when a target
+frees up, such a lease is expired instead of granted, so a client killed
+mid-wait never has its queue entry go active and hold the target until its
+TTL. Waiting clients (the CLI/MCP poll every ~2 s) are unaffected, and an
+owner that has never polled (e.g. an acquire with `wait:false` that checks
+back later) keeps the plain 30-minute contract above.
 
 ## 4. WebSocket surface
 
@@ -364,9 +373,9 @@ HID (AXe):
 | `button` | `name` ∈ `home`, `lock`, `side-button`, `siri`, `apple-pay` | `button` |
 | `key` | `keycode` (HID usage code; integer in `[0, 2^32-1]`, else `400 bad_request`), `duration_seconds?` | `keycode` |
 | `key_sequence` | `keycodes` (array; each an integer in `[0, 2^32-1]`, else `400 bad_request`) | `count` |
-| `tap_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `anchor?` (`start` \| `center` (default) \| `end`), `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node, no children), `x`, `y` (tapped point), `elapsed_ms`, `polls` |
-| `type_into_element` | same predicate/timing/anchor fields plus `text`, `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `tap_element`'s fields plus `typed_runes`, `strategy?` (echoed when `paste`) |
-| `scroll_to_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `anchor?`, `direction?` (`down` (default) \| `up` \| `left` \| `right`), `max_scrolls?` (default 8, max 30), `refresh?`, `timeout_ms?` (default 30000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children), `scrolls`, `polls`, `elapsed_ms`, `hash` (tree hash at success) |
+| `tap_element` | matcher (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?` — or `predicate?`, see below), `anchor?` (`start` \| `center` (default) \| `end`), `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node, no children), `x`, `y` (tapped point), `elapsed_ms`, `polls` |
+| `type_into_element` | same matcher/timing/anchor fields plus `text`, `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `tap_element`'s fields plus `typed_runes`, `strategy?` (echoed when `paste`) |
+| `scroll_to_element` | matcher (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?` — or `predicate?`), `anchor?`, `direction?` (`down` (default) \| `up` \| `left` \| `right`), `max_scrolls?` (default 8, max 30), `refresh?`, `timeout_ms?` (default 30000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children), `scrolls`, `polls`, `elapsed_ms`, `hash` (tree hash at success) |
 
 `tap_element` and `type_into_element` are composite actions: the server
 observes the a11y tree, finds the best element matching the predicate
@@ -374,7 +383,37 @@ observes the a11y tree, finds the best element matching the predicate
 the element appears within `timeout_ms`), and taps it —
 `type_into_element` then types `text` into the focused field — all in one
 request, saving the caller a full observe round-trip per interaction. A
-predicate that never matches is `408 timeout`.
+matcher that never matches is `408 timeout`; when elements matching the
+predicate exist in the tree but sit outside the viewport (or outside the
+matcher's `in_frame`/`bounds_hint` constraint), the timeout message
+appends an off-screen hint listing up to 3 candidates in depth-first
+order with their direction (`below the viewport`, ...), telling the
+agent to `scroll_to_element` instead of concluding the element does not
+exist. `wait_for_element` (appear) and `scroll_to_element` timeouts, and
+the `audit`/`observe` scope matchers, carry the same hint; ambiguous DSL
+matches mark listed candidates that are off-screen with `(off-screen)`.
+
+Every element action alternatively accepts a `predicate` payload field —
+a structured predicate object (additive, v0) that replaces the flat
+matcher fields (combining the two forms is `400 bad_request`). Its
+fields: `text?` (exact visible text — label or value), `text_contains?`
+(substring), `text_regex?` (RE2) — at most one text form;
+`type?` (element role, exact), `accessibility_id?` (exact),
+`bounds_hint?` (`top_half` \| `bottom_half` \| `left_half` \|
+`right_half` \| `center` — where the element's frame centre sits
+relative to the viewport), `near?`
+(`{predicate, direction: left|right|above|below, max_distance?}` — the
+element lies in that direction from another uniquely-resolved element,
+overlapping its row/column, within `max_distance` points centre-to-centre
+when set), `parent_of?` (a predicate on a descendant; resolves the direct
+parent, or the matching ancestor when other fields constrain it), and
+`index?` (0-based pick among the matches, in depth-first tree order). At
+least one field besides `index` is required; `near`/`parent_of` nest up
+to 4 levels. Unlike the flat matcher there is no best-match ranking:
+several matches without `index` are `409 ambiguous_match` with every
+candidate listed (role/label/id/frame) in the message, and zero matches
+keep polling until `408 timeout`. An `absent:true` wait treats an
+ambiguous predicate as "still present" and keeps polling.
 
 The tap lands on the element's frame centre by default. `anchor: "start"`
 or `"end"` moves it to a point inset half the frame height from the
@@ -436,6 +475,18 @@ For `type_into_element` the check runs after the focusing tap. Default
 `false` because a simulator with *Connect Hardware Keyboard* active never
 shows the on-screen keyboard; opt in on headless QA sims.
 
+HID and composite element actions (plus `launch_app`/`terminate_app`)
+accept an optional `capture_logs: true` payload flag (simulators only):
+after the action completes, the backend collects the simulator's
+`os_log` lines emitted during the action window (1 s of lead before the
+action start, via `simctl spawn <udid> log show`), optionally filtered
+with `log_process` (process name), and returns them as `logs` (newest 64
+KiB, older lines truncated). Collection is best-effort and time-bounded:
+a failure degrades to a `log_error` field, never a failed action. On a
+journaling daemon the lines are also stored as an `action-logs.txt` run
+artifact on the step's journal entry, correlating app logs with journal
+steps.
+
 HID actions accept an optional `ax_hashes: true` payload flag: the backend
 then hashes the a11y tree before and after the action (one extra
 `describe-ui` each) and returns `ax_before`/`ax_after`, which the journal
@@ -446,8 +497,9 @@ Observation:
 
 | `kind` | payload | result |
 |---|---|---|
-| `observe` | `include_raw?`, `refresh?` | `tree` (compacted a11y nodes), `hash`, `raw?`, `detail?` (`"empty_tree"` when the tree is empty) |
+| `observe` | `include_raw?`, `refresh?`, `format?` (`"json"` default \| `"compact"`), `interactive_only?`, `roles?` (array of role names), `scope?` (structured predicate object; must match exactly one element), `exclude_system_chrome?` | `tree` (compacted a11y nodes; replaced by `tree_compact` — one depth-indented line per element with stable depth-first `[i]` indexes — when `format:"compact"`), `hash` (always digests the FULL unfiltered tree), `total_elements?`/`returned_elements?` (when filters/scope active), `raw?`, `detail?` (`"empty_tree"` when the tree is empty) |
 | `screenshot` | `inline?` (default true), `format?` (`png` default \| `jpeg`), `quality?` (JPEG only, 1–100, default 80), `max_dim?` (longer-edge pixel cap; the capture is downscaled server-side, aspect preserved) | `format`, `bytes`, `sha256`, `backend`, `png_base64?` / `jpeg_base64?` (key follows `format`) |
+| `audit` | `checks?` (subset of `touch_target`, `clipping`, `alignment`, `spacing`, `safe_area`, `missing_labels`; default all), `region?` (`{x,y,w,h}` points), matcher fields or `predicate?` (scope to one subtree), `min_touch_pt?` (default 44), `alignment_tolerance_pt?` (default 4), `spacing_tolerance_pt?` (default 4), `safe_area_insets?` (`{top?,bottom?,left?,right?}`; default device-class heuristic), `inline?` (default true), `include_system_chrome?` (default false — system chrome such as the status bar, keyboard, and scroll-indicator pseudo-elements is suppressed from findings by default; see `internal/actions/chrome.go`), `include_covered_controls?` (default false — `touch_target` withholds small controls fully covered by an enclosing ≥min-size tappable Cell or Button row), `timeout_ms?`, `interval_ms?` | `findings` (array of `{check, ref, element{role?,label?,id?,frame?}, related?, measured?, evidence}` — measured evidence, no verdicts), `counts` (per check), `suppressed_elements`, `suppressed_covered_controls?`, `elided?` (per-check overflow past the 20-findings cap), `hash`, `viewport?`, plus the annotated screenshot as `format`/`bytes`/`sha256`/`backend`/`png_base64?` — or `screenshot_error?` when the capture failed (findings survive) |
 
 `observe` runs `axe describe-ui` and compacts the result: each node carries
 `role`, `label`, `value`, `placeholder`, `id`, `frame` (`x`,`y`,`w`,`h`),
@@ -485,12 +537,23 @@ entry; `inline:false` strips the base64 payload from the response only, so
 the capture can still be fetched from the journal. On a journal-less daemon
 `inline:false` still omits the bytes (nothing retains them).
 
+`audit` runs deterministic geometry checks over one a11y-tree observation
+and produces findings — measured evidence with an `evidence` sentence per
+finding, never pass/fail verdicts. Each finding's `ref` (`F1`, `F2`, ...)
+matches a labeled red box on the returned annotated screenshot. Dense
+grids of repeated same-role, same-size sibling controls (keyboards, emoji
+grids, calendar day cells) are suppressed. When the journal is enabled the
+findings JSON (`audit-findings.json`) and the annotated PNG
+(`audit-annotated.png`) are both stored as content-addressed run artifacts
+on the action's entry; `inline:false` strips only the wire payload, like
+`screenshot`.
+
 Waiting (deterministic sync primitives; poll the same a11y pipeline as
 `observe`):
 
 | `kind` | payload | result |
 |---|---|---|
-| `wait_for_element` | predicate (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?`), `absent?`, `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls`, `hash` (tree hash of the final poll) |
+| `wait_for_element` | matcher (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?` — or `predicate?`, see the element actions), `absent?`, `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls`, `hash` (tree hash of the final poll) |
 | `wait_tree_stable` | `stable_samples?` (default 3, 2–20), `timeout_ms?` (default 15000, max 120000, doubles as the max wait), `interval_ms?` (default 500, min 10), `require_stable?` (default false) | `stable`, `hash`, `settled_ms`, `samples` |
 
 `wait_for_element` polls a fresh compacted tree each interval until an
@@ -581,7 +644,7 @@ from simulators in these protocol-visible ways:
   endpoints (`/v0/state/*` and their WS methods) on a lease holding a
   device return `501 {"code":"not_implemented"}`.
 - **Actions**: only the kinds below are accepted. Recognized
-  simulator-only kinds (`key`, `key_sequence`, and any other kind the
+  simulator-only kinds (`key`, `key_sequence`, `audit`, and any other kind the
   simulator backend implements but WDA cannot express) are
   `501 {"code":"not_implemented"}`; unknown kinds stay
   `400 bad_request`. HID/observation kinds require a WebDriverAgent
@@ -601,7 +664,7 @@ from simulators in these protocol-visible ways:
 | `button` | `name` (`home`\|`lock`\|`volume-up`\|`volume-down`) | `button`, `backend:"wda"` |
 | `pasteboard_set` | `text` | `copied_runes`, `backend:"wda"` |
 | `pasteboard_get` | — | `text`, `backend:"wda"` (WDA requires its app foregrounded on iOS 13+) |
-| `observe` | `include_raw?` | `tree` (compacted a11y nodes mapped from the XCUITest source), `hash`, `raw?` (XCUITest XML when `include_raw`), `raw_format?:"xcuitest-xml"`, `backend:"wda"` |
+| `observe` | `include_raw?`, `format?`, `interactive_only?`, `roles?`, `scope?`, `exclude_system_chrome?` (same semantics as the simulator observe) | `tree` (compacted a11y nodes mapped from the XCUITest source; `tree_compact` when `format:"compact"`), `hash`, `total_elements?`/`returned_elements?`, `raw?` (XCUITest XML when `include_raw`), `raw_format?:"xcuitest-xml"`, `backend:"wda"` |
 | `tap_element` | same fields as the simulator kind | same result shape |
 | `type_into_element` | same fields as the simulator kind | same result shape |
 | `wait_for_element` | same fields as the simulator kind | same result shape |

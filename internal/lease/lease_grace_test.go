@@ -80,7 +80,9 @@ func TestGraceWindowClosesAndExpires(t *testing.T) {
 		t.Fatalf("q promoted during grace: %+v", gotQ)
 	}
 
-	now = now.Add(DefaultRenewGrace + time.Second)
+	now = now.Add(DefaultRenewGrace - 10*time.Second)
+	m.Get(q.ID) // the queued owner keeps polling, so it stays promotable
+	now = now.Add(11 * time.Second)
 	m.ExpireNow()
 	if got, _ := m.Get(l.ID); got.State != proto.LeaseExpired {
 		t.Fatalf("l after grace = %+v", got)

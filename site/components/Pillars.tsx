@@ -111,6 +111,7 @@ export default function Pillars() {
                 <p><span className="text-[#c22214]">#41</span> action.tap 187,412 · tree 4c91→a2ff</p>
                 <p><span className="text-[#c22214]">#42</span> action.type &quot;hello&quot; · tree a2ff→09be</p>
                 <p><span className="text-[#c22214]">#43</span> screenshot · artifacts/43.png</p>
+                <p><span className="text-[#c22214]">#44</span> action.audit · 3 findings · annotated.png</p>
               </div>
             </div>
           </Reveal>

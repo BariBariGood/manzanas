@@ -28,8 +28,12 @@ Commands:
   boot|shutdown UDID                   boot/shut down a leased target
   tap|swipe|type|button                HID actions (require --lease)
   observe                              compact a11y tree
+  tap-element                          find an element by matcher/predicate and tap it
+  type-into-element TEXT               find an element, focus it, and type into it
+  wait-for-element                     wait until a matched element appears (--absent: disappears)
   scroll-to-element                    scroll until a matched element is visible
   screenshot -o FILE.png               capture the screen (-o - for stdout)
+  audit                                deterministic UI checks: findings + annotated screenshot
   record start|stop                    screen recording (requires --lease)
   app install|launch|terminate         app lifecycle
   state snapshot|restore|fixture       deterministic state control
@@ -61,9 +65,13 @@ var commands = map[string]command{
 	"button":   cmdButton,
 	"observe":  cmdObserve,
 
+	"tap-element":       cmdTapElement,
+	"type-into-element": cmdTypeIntoElement,
+	"wait-for-element":  cmdWaitForElement,
 	"scroll-to-element": cmdScrollToElement,
 
 	"screenshot": cmdScreenshot,
+	"audit":      cmdAudit,
 	"app":        cmdApp,
 	"state":      cmdState,
 	"record":     cmdRecord,

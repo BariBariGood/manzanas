@@ -37,7 +37,7 @@ func handleScrollToElement(ctx context.Context, b *AXeBackend, udid string, p ma
 }
 
 func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string]any) (map[string]any, error) {
-	pr, err := predicateFromPayload(p)
+	pr, err := matcherFromPayload(p)
 	if err != nil {
 		return nil, err
 	}
@@ -69,10 +69,11 @@ func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string
 	start := time.Now()
 	deadline := start.Add(timeout)
 	seen := false
+	var lastObs observation
 	scrolls, polls := 0, 0
 	for {
 		if time.Now().After(deadline) {
-			return nil, scrollFailure(pr, seen, scrolls, time.Since(start))
+			return nil, scrollFailure(pr, seen, scrolls, time.Since(start), lastObs)
 		}
 		// pollUntil bounds each poll by the remaining budget itself; a
 		// deadline-wrapped ctx would defeat its "budget expired counts as
@@ -81,11 +82,17 @@ func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string
 		polls++
 		if err != nil {
 			if errors.Is(err, errNotYet) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, scrollFailure(pr, seen, scrolls, time.Since(start))
+				return nil, scrollFailure(pr, seen, scrolls, time.Since(start), lastObs)
 			}
 			return nil, err
 		}
-		hit := pr.findBest(obs.nodes, obs.viewport)
+		lastObs = obs
+		hit, rerr := pr.resolve(obs.nodes, obs.viewport)
+		if rerr != nil && !errors.Is(rerr, errNoMatch) {
+			// A hard resolution error (e.g. ambiguous_match) cannot be
+			// scrolled away.
+			return nil, rerr
+		}
 		region := scrollRegion(obs)
 		dir := direction
 		if hit != nil {
@@ -108,7 +115,7 @@ func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string
 			}
 		}
 		if scrolls >= maxScrolls || time.Now().After(deadline) {
-			return nil, scrollFailure(pr, seen, scrolls, time.Since(start))
+			return nil, scrollFailure(pr, seen, scrolls, time.Since(start), lastObs)
 		}
 		x1, y1, x2, y2 := swipeForDirection(region, dir)
 		if err := d.swipeXY(ctx, udid, x1, y1, x2, y2); err != nil {
@@ -141,14 +148,16 @@ func observeReadable(ctx context.Context, d elementDriver, udid string, refresh 
 
 // scrollFailure builds the terminal error: off_viewport when the element
 // was seen in the tree but never entered the viewport, timeout when it
-// never appeared at all.
-func scrollFailure(pr predicate, seen bool, scrolls int, elapsed time.Duration) error {
+// never appeared at all. The timeout form appends any off-screen
+// candidates from the last observation (elements the matcher would hit
+// with its positional constraint relaxed) so the caller can adjust.
+func scrollFailure(pr elementMatcher, seen bool, scrolls int, elapsed time.Duration, last observation) error {
 	if seen {
 		return offViewport("element (%s) matched in the tree but could not be brought into the viewport after %d scroll(s) (%s elapsed); it may be pinned off-screen or inside a non-scrollable container — observe the tree to check the layout",
 			pr, scrolls, elapsed.Round(time.Millisecond))
 	}
-	return timeoutErr("element (%s) not found in the accessibility tree after %d scroll(s) (%s elapsed); it may be on a different screen — observe the tree to see what is on screen now",
-		pr, scrolls, elapsed.Round(time.Millisecond))
+	return timeoutErr("element (%s) not found in the accessibility tree after %d scroll(s) (%s elapsed); it may be on a different screen — observe the tree to see what is on screen now%s",
+		pr, scrolls, elapsed.Round(time.Millisecond), offscreenHint(pr, last.nodes, last.viewport))
 }
 
 // scrollDirection reads the optional "direction" payload field: the edge

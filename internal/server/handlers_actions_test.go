@@ -119,6 +119,52 @@ func TestScreenshotJournaledAsArtifact(t *testing.T) {
 	}
 }
 
+func TestAuditJournalsFindingsAndScreenshot(t *testing.T) {
+	png := "\x89PNG\r\n\x1a\nfake"
+	backend := &recordingBackend{result: map[string]any{
+		"findings": []map[string]any{{"check": "touch_target", "ref": "F1"}},
+		"format":   "png", "png_base64": base64.StdEncoding.EncodeToString([]byte(png)),
+	}}
+	ts, store := newJournaledActionServer(t, backend)
+	l := acquire(t, ts)
+
+	var res proto.ActionResult
+	resp := doJSON(t, "POST", ts.URL+"/v0/actions",
+		proto.ActionRequest{LeaseID: l.ID, Kind: "audit", Payload: map[string]any{"inline": false}}, &res)
+	if resp.StatusCode != 200 || !res.OK {
+		t.Fatalf("dispatch: %d %+v", resp.StatusCode, res)
+	}
+	if _, ok := res.Result["png_base64"]; ok {
+		t.Fatal("inline=false response should omit png_base64")
+	}
+	if _, ok := res.Result["findings"]; !ok {
+		t.Fatal("findings must stay on the wire response")
+	}
+	e := lastEntryOfKind(t, store, l.ID, "action")
+	arts, _ := e.Payload["artifacts"].([]any)
+	if len(arts) != 2 {
+		t.Fatalf("entry artifacts = %+v, want findings JSON + annotated screenshot", e.Payload["artifacts"])
+	}
+	byExt := map[string]string{}
+	for _, a := range arts {
+		ref := a.(map[string]any)
+		path := ref["path"].(string)
+		rc, err := store.OpenArtifact(l.ID, path)
+		if err != nil {
+			t.Fatalf("open artifact %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(rc)
+		rc.Close()
+		byExt[path[strings.LastIndex(path, "."):]] = string(body)
+	}
+	if !strings.Contains(byExt[".json"], "touch_target") {
+		t.Fatalf("findings artifact = %q, want findings JSON", byExt[".json"])
+	}
+	if byExt[".png"] != png {
+		t.Fatalf("screenshot artifact mismatch: %q", byExt[".png"])
+	}
+}
+
 // lastEntryOfKind returns the newest journal entry of the given kind.
 func lastEntryOfKind(t *testing.T, store journal.Store, runID, kind string) journal.Entry {
 	t.Helper()

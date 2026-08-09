@@ -74,7 +74,8 @@ and pay huge fixed costs. manzanasd removes both, with measured numbers
 |---|---|
 | Leases | TTL-bounded exclusive claims, labels, FIFO queues, auto-reset |
 | Warm pool | park/thaw (SIGSTOP) pool sims: ~0.28 s lease-to-live, ~0 idle CPU |
-| Actions | cold (AXe) + warm (resident helper) taps/swipes/typing, composite `tap_element`, batches |
+| Actions | cold (AXe) + warm (resident helper) taps/swipes/typing, composite `tap_element` with a structured predicate DSL, batches |
+| Audit | deterministic UI checks (touch targets, clipping, alignment, spacing, safe area, missing labels) → findings + annotated screenshot in the journal |
 | Streaming | MJPEG fan-out, browser [`/view` page](docs/assets/live-view.png), WS frames |
 | Video | per-lease `simctl` recordings that land in the journal |
 | State | snapshots, fixtures, per-lease auto-reset, golden images |

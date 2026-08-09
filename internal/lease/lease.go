@@ -27,6 +27,13 @@ const (
 	// its owner polling Get before it expires, so abandoned requests don't
 	// block the queue or claim freed targets. Each Get refreshes it.
 	QueueWaitTTL = 30 * time.Minute
+	// QueuePromoteLiveness is the silence budget for queued owners that
+	// have started wait-polling: once an owner has polled Get at least
+	// once, going longer than this without another poll (e.g. the agent
+	// process was killed mid-wait) expires the lease at promotion time
+	// instead of granting it a target it will never use or release.
+	// Owners that have never polled keep the plain QueueWaitTTL contract.
+	QueuePromoteLiveness = 30 * time.Second
 	// DefaultRenewGrace is the default renewal grace window: an active
 	// lease that passes its nominal expires_at stays active (and
 	// renewable) for this long before it actually expires and its
@@ -90,6 +97,9 @@ type Manager struct {
 	// queueDeadline maps queued lease ID -> abandonment deadline,
 	// refreshed whenever the owner polls Get.
 	queueDeadline map[string]time.Time
+	// queuePolled marks queued leases whose owner has polled Get at least
+	// once, opting them into the QueuePromoteLiveness silence budget.
+	queuePolled map[string]bool
 	// pendingResets holds leases whose expiry requested an auto-reset;
 	// drained by takeResetsLocked at each unlock point.
 	pendingResets []proto.Lease
@@ -137,6 +147,7 @@ func newManager(reg registry.Registry, onEvent GrantFunc) *Manager {
 		queues:        make(map[string][]string),
 		terminalAt:    make(map[string]time.Time),
 		queueDeadline: make(map[string]time.Time),
+		queuePolled:   make(map[string]bool),
 		resetInFlight: make(map[string]bool),
 		dirty:         make(map[string]bool),
 		takeoverHold:  make(map[string]bool),
@@ -556,6 +567,7 @@ func (m *Manager) Get(id string) (proto.Lease, error) {
 	if l.State == proto.LeaseQueued {
 		l.QueuePosition = m.queuePositionLocked(l)
 		m.queueDeadline[l.ID] = m.now().Add(QueueWaitTTL)
+		m.queuePolled[l.ID] = true
 	}
 	return m.viewLocked(*l), nil
 }
@@ -641,6 +653,7 @@ func (m *Manager) Release(ctx context.Context, id string) (proto.Lease, error) {
 	case proto.LeaseQueued:
 		m.removeFromQueueLocked(l)
 		delete(m.queueDeadline, l.ID)
+		delete(m.queuePolled, l.ID)
 		l.State = proto.LeaseReleased
 		m.terminalAt[l.ID] = m.now()
 	}
@@ -715,6 +728,7 @@ func (m *Manager) expireLocked() []proto.Lease {
 		l := m.leases[id]
 		m.removeFromQueueLocked(l)
 		delete(m.queueDeadline, id)
+		delete(m.queuePolled, id)
 		l.State = proto.LeaseExpired
 		m.terminalAt[id] = now
 		events = append(events, *l)
@@ -766,16 +780,39 @@ func (m *Manager) promoteLocked(udid string) []proto.Lease {
 	if !ok {
 		return nil
 	}
-	for key, q := range m.queues {
-		for i, id := range q {
+	var events []proto.Lease
+	for key := range m.queues {
+		i := 0
+		for i < len(m.queues[key]) {
+			id := m.queues[key][i]
 			l := m.leases[id]
 			if !matchesRequest(target, l.Labels, l.RequestedUDID) {
+				i++
 				continue
 			}
 			// A reset-carrying lease must never land on a physical
 			// device (there is no erase/snapshot for devices); it keeps
 			// waiting for a resettable target instead.
 			if l.Reset != "" && l.Reset != "none" && target.Kind == proto.TargetDevice {
+				i++
+				continue
+			}
+			// A matching lease whose owner was wait-polling and then
+			// stopped is abandoned (its agent likely died mid-wait):
+			// expire it instead of granting it a target it will never
+			// release. Owners that never polled are not gated here.
+			if m.queueOwnerSilentLocked(id) {
+				q := m.queues[key]
+				m.queues[key] = append(q[:i], q[i+1:]...)
+				if len(m.queues[key]) == 0 {
+					delete(m.queues, key)
+				}
+				delete(m.queueDeadline, id)
+				delete(m.queuePolled, id)
+				delete(m.preGrant, id)
+				l.State = proto.LeaseExpired
+				m.terminalAt[id] = m.now()
+				events = append(events, *l)
 				continue
 			}
 			// A reset:"erase" lease landing on a dirty target is not
@@ -786,16 +823,19 @@ func (m *Manager) promoteLocked(udid string) []proto.Lease {
 				// One erase per queued lease: if one is already running
 				// for it on another target, don't erase this one too.
 				if _, inflight := m.preGrant[l.ID]; inflight {
+					i++
 					continue
 				}
 				m.startPreGrantEraseLocked(l, udid)
-				return nil
+				return events
 			}
+			q := m.queues[key]
 			m.queues[key] = append(q[:i], q[i+1:]...)
 			if len(m.queues[key]) == 0 {
 				delete(m.queues, key)
 			}
 			delete(m.queueDeadline, id)
+			delete(m.queuePolled, id)
 			ttl := clampTTL(l.TTLSeconds)
 			l.State = proto.LeaseActive
 			l.TargetUDID = udid
@@ -805,10 +845,28 @@ func (m *Manager) promoteLocked(udid string) []proto.Lease {
 			l.GraceUntil = nil
 			m.byTarget[udid] = l.ID
 			m.dirty[udid] = true
-			return []proto.Lease{*l}
+			return append(events, *l)
 		}
 	}
-	return nil
+	return events
+}
+
+// queueOwnerSilentLocked reports whether a queued lease's owner started
+// wait-polling Get and then went longer than QueuePromoteLiveness without
+// another poll. Owners that have never polled are never reported silent:
+// they keep the plain QueueWaitTTL abandonment contract. The last poll is
+// derived from the abandonment deadline, which Get sets to
+// lastPoll + QueueWaitTTL.
+func (m *Manager) queueOwnerSilentLocked(id string) bool {
+	if !m.queuePolled[id] {
+		return false
+	}
+	deadline, ok := m.queueDeadline[id]
+	if !ok {
+		return false
+	}
+	lastPoll := deadline.Add(-QueueWaitTTL)
+	return m.now().Sub(lastPoll) > QueuePromoteLiveness
 }
 
 func (m *Manager) removeFromQueueLocked(l *proto.Lease) {

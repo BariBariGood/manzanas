@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -27,6 +28,8 @@ func actionStatus(code string) int {
 	case proto.ErrTimeout:
 		return http.StatusRequestTimeout
 	case proto.ErrOffViewport:
+		return http.StatusConflict
+	case proto.ErrAmbiguousMatch:
 		return http.StatusConflict
 	case proto.ErrFocusRequired:
 		return http.StatusPreconditionFailed
@@ -88,22 +91,27 @@ func (s *Server) dispatchAction(ctx context.Context, req proto.ActionRequest) (p
 		ev.AXAfter = h
 	}
 	if req.Kind == "screenshot" {
-		s.journalScreenshot(res.Result, req.Payload, &ev)
+		s.journalImage(res.Result, req.Payload, &ev, "screenshot")
 	}
+	if req.Kind == "audit" {
+		s.journalAudit(res.Result, req.Payload, &ev)
+	}
+	s.journalLogs(res.Result, &ev)
 	if ref := s.journal.Record(ctx, ev); ref.RunID != "" && res.JournalRef == nil {
 		res.JournalRef = &ref
 	}
 	return res, nil
 }
 
-// journalScreenshot stores a successful screenshot's image as a run artifact
-// (so callers using inline:false can still fetch the capture from the
-// journal when journaling is enabled) and strips the inline payload when
-// the caller opted out. inline:false is always honored on the wire — the
-// caller explicitly declined the bytes; on a journal-less daemon that
-// matches the pre-artifact contract where the pixels were never encoded.
-// Best-effort: a store failure leaves the entry without an artifact ref.
-func (s *Server) journalScreenshot(result, payload map[string]any, ev *journal.Event) {
+// journalImage stores a successful capture's image as a run artifact named
+// base.<format> (so callers using inline:false can still fetch the capture
+// from the journal when journaling is enabled) and strips the inline
+// payload when the caller opted out. inline:false is always honored on the
+// wire — the caller explicitly declined the bytes; on a journal-less daemon
+// that matches the pre-artifact contract where the pixels were never
+// encoded. Best-effort: a store failure leaves the entry without an
+// artifact ref.
+func (s *Server) journalImage(result, payload map[string]any, ev *journal.Event, base string) {
 	// Whitelist the backend-supplied format before using it as a result
 	// key and artifact extension (defense in depth; the eval runner clamps
 	// the same way).
@@ -118,13 +126,45 @@ func (s *Server) journalScreenshot(result, payload map[string]any, ev *journal.E
 	}
 	if store := s.journal.Store(); store != nil {
 		if img, err := base64.StdEncoding.DecodeString(b64); err == nil {
-			if ref, err := store.PutArtifact(ev.LeaseID, "screenshot."+format, bytes.NewReader(img)); err == nil {
+			if ref, err := store.PutArtifact(ev.LeaseID, base+"."+format, bytes.NewReader(img)); err == nil {
 				ev.Artifacts = append(ev.Artifacts, ref)
 			}
 		}
 	}
 	if inline, ok := payload["inline"].(bool); ok && !inline {
 		delete(result, key)
+	}
+}
+
+// journalAudit stores an audit's two evidence outputs as run artifacts:
+// the findings JSON and the annotated screenshot. Best-effort, like
+// journalImage.
+func (s *Server) journalAudit(result, payload map[string]any, ev *journal.Event) {
+	if store := s.journal.Store(); store != nil {
+		if f, ok := result["findings"]; ok {
+			if b, err := json.MarshalIndent(f, "", "  "); err == nil {
+				if ref, err := store.PutArtifact(ev.LeaseID, "audit-findings.json", bytes.NewReader(b)); err == nil {
+					ev.Artifacts = append(ev.Artifacts, ref)
+				}
+			}
+		}
+	}
+	s.journalImage(result, payload, ev, "audit-annotated")
+}
+
+// journalLogs stores an action's captured os_log lines (capture_logs:
+// true) as a run artifact, correlating the log window with the journal
+// step. Best-effort, like journalImage; the inline "logs" field stays on
+// the wire either way — the caller asked for the lines.
+func (s *Server) journalLogs(result map[string]any, ev *journal.Event) {
+	logs, _ := result["logs"].(string)
+	if logs == "" {
+		return
+	}
+	if store := s.journal.Store(); store != nil {
+		if ref, err := store.PutArtifact(ev.LeaseID, "action-logs.txt", bytes.NewReader([]byte(logs))); err == nil {
+			ev.Artifacts = append(ev.Artifacts, ref)
+		}
 	}
 }
 

@@ -145,15 +145,71 @@ func cmdButton(ctx context.Context, app *appEnv, args []string) error {
 }
 
 // cmdObserve implements `manzanas observe --lease ID` ("observe" action,
-// compact a11y tree).
+// compact a11y tree), with optional server-side filters and the compact
+// indexed text format.
 func cmdObserve(ctx context.Context, app *appEnv, args []string) error {
-	leaseID, _, err := leaseFlag(app, "observe", args, 0)
+	fs := app.newFlagSet("observe")
+	lease := fs.String("lease", os.Getenv("MANZANAS_LEASE"), "active lease ID (or $MANZANAS_LEASE)")
+	compact := fs.Bool("compact", false, "return the compact indexed text rendering (one line per element, [i] indexes) instead of nested JSON")
+	interactive := fs.Bool("interactive-only", false, "only interactable elements (ancestors kept for structure)")
+	roles := fs.String("roles", "", "comma-separated roles to keep (e.g. Button,Cell)")
+	scope := fs.String("scope", "", `narrow to one element's subtree: structured predicate JSON (e.g. '{"type":"Table"}')`)
+	excludeChrome := fs.Bool("exclude-system-chrome", false, "drop status bar, keyboard, and scroll-indicator chrome from the tree")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("observe: unexpected argument %q", fs.Arg(0))
+	}
+	if *lease == "" {
+		return fmt.Errorf("observe: --lease (or $MANZANAS_LEASE) is required")
+	}
+	payload := map[string]any{}
+	if *compact {
+		payload["format"] = "compact"
+	}
+	if *interactive {
+		payload["interactive_only"] = true
+	}
+	if *roles != "" {
+		list := []any{}
+		for _, r := range strings.Split(*roles, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				list = append(list, r)
+			}
+		}
+		payload["roles"] = list
+	}
+	if *scope != "" {
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(*scope), &obj); err != nil {
+			return fmt.Errorf("observe: --scope must be a JSON predicate object: %w", err)
+		}
+		payload["scope"] = obj
+	}
+	if *excludeChrome {
+		payload["exclude_system_chrome"] = true
+	}
+	res, err := app.client.Dispatch(ctx, proto.ActionRequest{
+		LeaseID: *lease, Kind: "observe", Payload: payload})
 	if err != nil {
 		return err
 	}
-	res, err := app.client.Observe(ctx, leaseID)
-	if err != nil {
-		return err
+	// In text mode print the compact rendering as-is on stdout: it is
+	// already the human/agent-readable form; JSON-quoting it would defeat
+	// the point. Status and metadata (hash, element counts) go to stderr
+	// so `observe --compact > tree.txt` captures only the tree.
+	if *compact && !app.json && res.OK {
+		if text, ok := res.Result["tree_compact"].(string); ok {
+			fmt.Fprint(app.stdout, text)
+			delete(res.Result, "tree_compact")
+			fmt.Fprintln(app.stderr, "ok")
+			if len(res.Result) > 0 {
+				b, _ := json.MarshalIndent(res.Result, "", "  ")
+				fmt.Fprintln(app.stderr, string(b))
+			}
+			return nil
+		}
 	}
 	return emitActionResult(app, res)
 }
@@ -227,15 +283,10 @@ func cmdScreenshot(ctx context.Context, app *appEnv, args []string) error {
 func cmdScrollToElement(ctx context.Context, app *appEnv, args []string) error {
 	fs := app.newFlagSet("scroll-to-element")
 	lease := fs.String("lease", os.Getenv("MANZANAS_LEASE"), "active lease ID (or $MANZANAS_LEASE)")
-	label := fs.String("label", "", "match by accessibility label (substring unless --exact)")
-	role := fs.String("role", "", "match by role (exact, e.g. Button, Cell)")
-	value := fs.String("value", "", "match by value (substring unless --exact)")
-	id := fs.String("id", "", "match by accessibility identifier (exact)")
-	placeholder := fs.String("placeholder", "", "match by placeholder (substring unless --exact)")
-	exact := fs.Bool("exact", false, "text fields must match exactly")
 	direction := fs.String("direction", "", "scroll direction when the element is not visible yet: down (default), up, left, right")
 	maxScrolls := fs.Int("max-scrolls", 0, "max swipe attempts (default 8, max 30)")
-	timeoutMS := fs.Int("timeout-ms", 0, "overall budget in milliseconds (default 30000)")
+	buildMatcher := matcherFlags(fs)
+	buildLogs := logFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -246,21 +297,16 @@ func cmdScrollToElement(ctx context.Context, app *appEnv, args []string) error {
 		return fmt.Errorf("scroll-to-element: --lease (or $MANZANAS_LEASE) is required")
 	}
 	payload := map[string]any{}
-	for k, v := range map[string]string{"label": *label, "role": *role, "value": *value,
-		"id": *id, "placeholder": *placeholder, "direction": *direction} {
-		if v != "" {
-			payload[k] = v
-		}
+	if err := buildMatcher(payload); err != nil {
+		return fmt.Errorf("scroll-to-element: %w", err)
 	}
-	if *exact {
-		payload["exact"] = true
+	if *direction != "" {
+		payload["direction"] = *direction
 	}
 	if *maxScrolls > 0 {
 		payload["max_scrolls"] = *maxScrolls
 	}
-	if *timeoutMS > 0 {
-		payload["timeout_ms"] = *timeoutMS
-	}
+	buildLogs(payload)
 	res, err := app.client.Dispatch(ctx, proto.ActionRequest{
 		LeaseID: *lease, Kind: "scroll_to_element", Payload: payload})
 	if err != nil {

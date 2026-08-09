@@ -85,6 +85,7 @@ func NewAXe(opts ...Option) *AXeBackend {
 		"pasteboard_get":    handlePasteboardGet,
 		"pasteboard_set":    handlePasteboardSet,
 		"screenshot":        handleScreenshot,
+		"audit":             handleAudit,
 		"install_app":       handleInstallApp,
 		"launch_app":        handleLaunchApp,
 		"terminate_app":     handleTerminateApp,
@@ -156,6 +157,17 @@ var hidKinds = map[string]bool{
 	"tap_element": true, "type_into_element": true, "scroll_to_element": true,
 }
 
+// logKinds are the actions that support opt-in os_log capture around the
+// action window via payload {"capture_logs": true} (see logs.go): the
+// HID/composite kinds plus app lifecycle, whose launch/termination logs
+// are exactly what a debugging agent wants correlated.
+var logKinds = map[string]bool{
+	"tap": true, "swipe": true, "type": true, "button": true,
+	"key": true, "key_sequence": true,
+	"tap_element": true, "type_into_element": true, "scroll_to_element": true,
+	"launch_app": true, "terminate_app": true,
+}
+
 // Dispatch implements Backend.
 func (b *AXeBackend) Dispatch(ctx context.Context, udid string, req proto.ActionRequest) (proto.ActionResult, error) {
 	h, ok := b.handlers[req.Kind]
@@ -174,10 +186,18 @@ func (b *AXeBackend) Dispatch(ctx context.Context, udid string, req proto.Action
 		}
 		wantAX = v && b.axePath != ""
 	}
+	var logSpec logCaptureSpec
+	if logKinds[req.Kind] {
+		var err error
+		if logSpec, err = logCaptureFromPayload(req.Payload); err != nil {
+			return proto.ActionResult{}, err
+		}
+	}
 	var axBefore string
 	if wantAX {
 		axBefore = b.hashTree(ctx, udid)
 	}
+	start := time.Now()
 	res, err := h(ctx, b, udid, req.Payload)
 	if err != nil {
 		return proto.ActionResult{}, err
@@ -191,6 +211,18 @@ func (b *AXeBackend) Dispatch(ctx context.Context, udid string, req proto.Action
 		}
 		if h := b.hashTree(ctx, udid); h != "" {
 			res["ax_after"] = h
+		}
+	}
+	if logSpec.enabled {
+		if res == nil {
+			res = map[string]any{}
+		}
+		// Best-effort: the action already succeeded; a log collection
+		// failure degrades to log_error, never a failed action.
+		if logs, lerr := b.captureLogs(ctx, udid, start, logSpec); lerr != nil {
+			res["log_error"] = lerr.Error()
+		} else {
+			res["logs"] = logs
 		}
 	}
 	return proto.ActionResult{OK: true, Result: res}, nil

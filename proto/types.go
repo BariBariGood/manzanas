@@ -536,6 +536,7 @@ const (
 	ErrUnavailable     = "unavailable"       // a required host tool (e.g. AXe) is missing
 	ErrTimeout         = "timeout"           // a wait_* action's budget was exhausted
 	ErrOffViewport     = "off_viewport"      // an element action's tap point lies outside the device viewport
+	ErrAmbiguousMatch  = "ambiguous_match"   // an element predicate matched several elements and no index picked one
 	ErrFocusRequired   = "focus_required"    // a typing action with require_focus found no focused text field (no on-screen keyboard)
 	ErrReadOnly        = "read_only"         // dashboard controls disabled (--dash-readonly)
 	ErrInternal        = "internal"

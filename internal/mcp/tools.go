@@ -36,6 +36,7 @@ func allTools() []Tool {
 		toolType(),
 		toolButton(),
 		toolScreenshot(),
+		toolAudit(),
 		toolRecordStart(),
 		toolRecordStop(),
 		toolApp(),

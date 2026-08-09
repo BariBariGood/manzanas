@@ -137,7 +137,7 @@ func elemTypeInto(ctx context.Context, d elementDriver, udid string, p map[strin
 // sheet or toast still animating in) keeps the wait polling; off_viewport
 // surfaces only when the budget expires with nothing tappable on screen.
 func findElement(ctx context.Context, d elementDriver, udid string, p map[string]any, anchor string) (*Node, *Frame, map[string]any, error) {
-	pr, err := predicateFromPayload(p)
+	pr, err := matcherFromPayload(p)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -151,6 +151,7 @@ func findElement(ctx context.Context, d elementDriver, udid string, p map[string
 	}
 	var found *Node
 	var viewport *Frame
+	var lastObs observation
 	offScreen := false
 	polls, elapsed, err := pollUntil(ctx, timeout, interval, func(ctx context.Context) error {
 		obs, err := d.observeOnce(ctx, udid, refresh)
@@ -158,10 +159,16 @@ func findElement(ctx context.Context, d elementDriver, udid string, p map[string
 			offScreen = false
 			return err
 		}
-		hit := pr.findBest(obs.nodes, obs.viewport)
-		if hit == nil {
-			offScreen = false
-			return errNotYet
+		lastObs = obs
+		hit, rerr := pr.resolve(obs.nodes, obs.viewport)
+		if rerr != nil {
+			if errors.Is(rerr, errNoMatch) {
+				offScreen = false
+				return errNotYet
+			}
+			// A hard resolution error (e.g. ambiguous_match) stops the
+			// poll: more waiting cannot disambiguate it.
+			return rerr
 		}
 		if obs.viewport != nil && hit.Frame != nil && hit.Frame.W > 0 && hit.Frame.H > 0 {
 			if x, y := anchorPoint(hit.Frame, anchor); !pointInViewport(x, y, obs.viewport) {
@@ -179,8 +186,9 @@ func findElement(ctx context.Context, d elementDriver, udid string, p map[string
 				return nil, nil, nil, offViewport("element (%s) matched but stayed outside the viewport for the whole %s budget (%d poll(s), %s elapsed); scroll it into view first",
 					pr, timeout, polls, elapsed.Round(time.Millisecond))
 			}
-			return nil, nil, nil, timeoutErr("element (%s) did not appear within the %s budget (%d poll(s), %s elapsed)",
-				pr, timeout, polls, elapsed.Round(time.Millisecond))
+			return nil, nil, nil, timeoutErr("element (%s) did not appear within the %s budget (%d poll(s), %s elapsed)%s",
+				pr, timeout, polls, elapsed.Round(time.Millisecond),
+				offscreenHint(pr, lastObs.nodes, lastObs.viewport))
 		}
 		return nil, nil, nil, err
 	}
