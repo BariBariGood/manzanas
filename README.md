@@ -32,7 +32,7 @@ clients lease across the whole fleet without changing a line.
 of paying a 5 s+ boot — then drive one (warm taps land in ~50 ms end-to-end)
 and export the run journal as PR-ready evidence.*
 
-**Website: [manzanas-one.vercel.app](https://manzanas-one.vercel.app)** (source in
+**Website: [manzanasgo.vercel.app](https://manzanasgo.vercel.app)** (source in
 [`site/`](site/)).
 
 ## Install
