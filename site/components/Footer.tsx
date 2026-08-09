@@ -51,10 +51,18 @@ export default function Footer() {
 
       <footer className="border-t border-[#d2d2d7] bg-white">
         <div className="mx-auto flex max-w-[1200px] flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <AppleLeaf className="h-4 w-4 text-[#c22214]" />
             <span className="text-xs font-semibold text-[#1d1d1f]">manzanas</span>
             <span className="text-xs text-[#6e6e73]">· MIT License</span>
+            <a href="https://allmcps.com/mcp/manzanas">
+              <img
+                src="https://allmcps.com/api/badge/manzanas?style=directory"
+                alt="AllMCPs"
+                height="40"
+                className="h-7 w-auto"
+              />
+            </a>
           </div>
           <div className="flex items-center gap-6 text-xs text-[#6e6e73]">
             <a

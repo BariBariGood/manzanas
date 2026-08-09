@@ -29,6 +29,10 @@ export const metadata: Metadata = {
       "The daemon that tends your orchard of Macs and simulators.",
     images: ["/og.png"],
   },
+  other: {
+    "allmcps-site-verification":
+      "manzanas:cc5ceeeb-24c5-4ac5-9327-f57ad5eb1165",
+  },
 };
 
 export default function RootLayout({
