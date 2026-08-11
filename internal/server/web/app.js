@@ -33,14 +33,61 @@
     return Math.floor(m / 60) + "h " + (m % 60) + "m";
   };
 
+  // ---- auth token (--auth-token daemons) --------------------------------
+  // A one-time ?token= in the page URL is stored in localStorage and
+  // stripped; thereafter every API call carries it as a bearer header, and
+  // URLs that cannot set headers (the MJPEG <img>, the WS, view links) get
+  // ?token= appended. With no token configured nothing changes.
+
+  const TOKEN_KEY = "manzanas_token";
+  let memToken = ""; // fallback when localStorage is blocked (private mode)
+  (() => {
+    const u = new URL(location.href);
+    const t = u.searchParams.get("token");
+    if (t) {
+      memToken = t;
+      try { localStorage.setItem(TOKEN_KEY, t); } catch { /* private mode */ }
+      u.searchParams.delete("token");
+      history.replaceState(null, "", u);
+    }
+  })();
+
+  const token = () => {
+    try { return localStorage.getItem(TOKEN_KEY) || memToken; } catch { return memToken; }
+  };
+
+  const authHeaders = () =>
+    token() ? { Authorization: "Bearer " + token() } : {};
+
+  const withToken = (url) => token()
+    ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token())
+    : url;
+
+  // On a 401, ask for the token once per page load and reload with it.
+  let tokenPrompted = false;
+  const promptToken = () => {
+    if (tokenPrompted) return;
+    tokenPrompted = true;
+    const t = window.prompt("This daemon requires an auth token (--auth-token). Paste it to continue:");
+    if (t) {
+      // Reload with ?token= so the init path picks it up even when
+      // localStorage is blocked; it is stored and stripped on load.
+      const u = new URL(location.href);
+      u.searchParams.set("token", t);
+      location.replace(u);
+    }
+  };
+
   const getJSON = async (url) => {
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: authHeaders() });
+    if (r.status === 401) promptToken();
     if (!r.ok) throw new Error(url + " -> " + r.status);
     return r.json();
   };
 
   const postJSON = async (url) => {
-    const r = await fetch(url, { method: "POST" });
+    const r = await fetch(url, { method: "POST", headers: authHeaders() });
+    if (r.status === 401) promptToken();
     let j = {};
     try { j = await r.json(); } catch { /* error shape is best-effort */ }
     if (!r.ok) throw new Error(j.message || (url + " -> " + r.status));
@@ -82,7 +129,9 @@
     const h = $("health");
     try {
       const j = await getJSON("/v0/healthz");
-      h.textContent = j.ok ? "healthy · " + (j.version || "") : "unhealthy";
+      h.textContent = j.ok
+        ? "healthy · " + (j.build || j.version || "")
+        : "unhealthy";
       h.classList.toggle("err", !j.ok);
     } catch {
       h.textContent = "daemon unreachable";
@@ -130,7 +179,7 @@
         act.appendChild(btn);
       } else {
         const a = el("a");
-        a.href = "/view/" + encodeURIComponent(t.udid);
+        a.href = withToken("/view/" + encodeURIComponent(t.udid));
         a.target = "_blank";
         a.appendChild(btn);
         act.appendChild(a);
@@ -267,7 +316,7 @@
     let ws;
     try {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(proto + "//" + location.host + "/v0/ws");
+      ws = new WebSocket(withToken(proto + "//" + location.host + "/v0/ws"));
     } catch {
       scheduleReconnect();
       return;
@@ -321,9 +370,10 @@
     try {
       const r = await fetch("/v0/streams", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ udid, format: "mjpeg" }),
       });
+      if (r.status === 401) promptToken();
       const offer = await r.json();
       if (!r.ok) {
         mvActive.delete(udid);
@@ -344,7 +394,7 @@
         status.textContent = "stream attach failed (viewer limit, or the stream was reaped)";
         status.classList.add("err");
       };
-      img.src = offer.mjpeg_url;
+      img.src = withToken(offer.mjpeg_url);
       img.hidden = false;
       status.textContent = "live · " + offer.fps + " fps";
     } catch (e) {
@@ -466,7 +516,7 @@
     }
     for (const a of p.artifacts || []) {
       const path = a.path || "";
-      const url = "/v0/journal/" + encodeURIComponent(id) + "/" + path;
+      const url = withToken("/v0/journal/" + encodeURIComponent(id) + "/" + path);
       if (/\.(png|jpe?g|gif|webp)$/i.test(path)) {
         const img = el("img");
         img.loading = "lazy";
@@ -513,7 +563,7 @@
     $("journal-runs-pane").hidden = true;
     $("journal-run-pane").hidden = false;
     $("run-title").textContent = id;
-    $("run-export").href = "/v0/journal/" + encodeURIComponent(id) + "/export.md";
+    $("run-export").href = withToken("/v0/journal/" + encodeURIComponent(id) + "/export.md");
     $("run-meta").textContent = "";
     $("run-entries").replaceChildren();
     $("run-more").hidden = true;

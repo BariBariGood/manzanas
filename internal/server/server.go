@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
+	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	"github.com/BariBariGood/manzanas/internal/journal"
 	"github.com/BariBariGood/manzanas/internal/lease"
 	"github.com/BariBariGood/manzanas/internal/record"
@@ -76,6 +77,10 @@ type Server struct {
 	// dashReadonly disables the dashboard's mutating control endpoints
 	// (/v0/dash/...); see SetDashReadonly.
 	dashReadonly bool
+	// authToken, when non-empty, gates every endpoint except GET
+	// /v0/healthz and static assets behind a shared bearer token; see
+	// SetAuthToken.
+	authToken string
 
 	// bootWaitPoll overrides the boot-wait retry interval (tests);
 	// 0 means defaultBootWaitPoll.
@@ -102,6 +107,9 @@ type Server struct {
 	// GC-exempt flag always converges to the lease's current state (see
 	// syncRunOpen).
 	openMu sync.Mutex
+
+	// runs tracks the one-call run primitive's resources (POST /v0/runs).
+	runs *runStore
 }
 
 // New creates a Server. The lease manager may be nil at construction time
@@ -113,7 +121,8 @@ func New(reg registry.Registry, leases *lease.Manager, log *slog.Logger) *Server
 	return &Server{reg: reg, leases: leases, log: log, events: newEventHub(),
 		lastShutdown:  make(map[string]shutdownNote),
 		bootWaitSlots: make(chan struct{}, maxBootWaiters),
-		waitByLease:   make(map[string]bool)}
+		waitByLease:   make(map[string]bool),
+		runs:          newRunStore()}
 }
 
 // shutdownNote records one daemon-driven target shutdown for later
@@ -465,21 +474,27 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("/v0/images/", s.notImplemented("images"))
 	if s.streamer != nil {
-		mux.HandleFunc("POST /v0/streams", s.handleOpenStream)
+		mux.HandleFunc("POST /v0/streams", s.corsStreams(s.handleOpenStream))
 		mux.HandleFunc("DELETE /v0/streams/{id}", s.handleCloseStream)
 		mux.HandleFunc("GET /v0/streams/{id}/mjpeg", s.handleStreamMJPEG)
 		mux.HandleFunc("GET /v0/streams/{id}/ws", s.handleStreamWS)
 		mux.HandleFunc("GET /view/{udid}", s.handleViewPage)
 	} else {
-		mux.HandleFunc("POST /v0/streams", s.notImplemented("streams"))
+		mux.HandleFunc("POST /v0/streams", s.corsStreams(s.notImplemented("streams")))
 	}
+	mux.HandleFunc("OPTIONS /v0/streams", s.handleStreamsPreflight)
 	mux.HandleFunc("POST /v0/actions", s.handleAction)
 	mux.HandleFunc("POST /v0/actions:batch", s.handleActionBatch)
-	return mux
+	mux.HandleFunc("POST /v0/runs", s.handleRunCreate)
+	mux.HandleFunc("GET /v0/runs", s.handleRunList)
+	mux.HandleFunc("GET /v0/runs/{id}", s.handleRunGet)
+	return s.authMiddleware(mux)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": proto.Version})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "version": proto.Version, "build": buildinfo.Version,
+	})
 }
 
 func (s *Server) notImplemented(slice string) http.HandlerFunc {

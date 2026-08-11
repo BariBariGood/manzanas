@@ -99,7 +99,8 @@ make build            # builds bin/manzanasd, bin/manzanas, bin/manzanas-broker
 # on a Mac with Xcode:
 ./bin/manzanasd --addr :7433
 
-# anywhere (Linux/dev/CI), with a mock fleet:
+# anywhere (Linux/dev/CI), with a mock fleet and a full mock action
+# backend — the whole lease→observe→tap→audit loop, no Mac (docs/mock.md):
 ./bin/manzanasd --addr :7433 --mock
 
 # list simulators

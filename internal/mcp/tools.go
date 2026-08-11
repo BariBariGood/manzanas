@@ -41,6 +41,8 @@ func allTools() []Tool {
 		toolRecordStop(),
 		toolApp(),
 		toolState(),
+		toolRun(),
+		toolRunStatus(),
 		toolJournalExport(),
 	}
 }

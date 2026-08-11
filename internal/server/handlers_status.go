@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	"github.com/BariBariGood/manzanas/internal/warm"
 	"github.com/BariBariGood/manzanas/proto"
 )
@@ -20,6 +21,7 @@ func (s *Server) SetPoolStatus(fn PoolStatusFunc) { s.poolStatus = fn }
 // snapshot for fleet schedulers (see proto.HostStatus).
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	st := proto.HostStatus{
+		Build:      buildinfo.Version,
 		Gates:      proto.HostGates{LoadOK: true, DiskOK: true},
 		PoolAdvice: s.adviceSnapshot(),
 	}

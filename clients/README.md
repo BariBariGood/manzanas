@@ -25,6 +25,13 @@ manzanas lease release $MANZANAS_LEASE                      # hand it back
 Add `--json` for machine-readable output. Every command maps 1:1 onto the
 wire protocol (`proto/PROTOCOL.md`).
 
+The same commands work pointed at a `manzanas-broker` fleet endpoint:
+acquire places the lease on some Mac, and every lease-scoped command
+(boot, actions, observe, screenshot, streams, state, journal, release)
+follows the lease's `host_addr` to the owning daemon automatically — you
+never re-point `--daemon` / `MANZANASD_ADDR` mid-run. See
+[docs/broker.md](../docs/broker.md).
+
 ## MCP for agents
 
 `manzanas mcp` serves lease-scoped MCP tools over stdio: `lease_acquire`,

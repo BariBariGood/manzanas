@@ -26,8 +26,35 @@ Put every Mac and every client machine on the same tailnet:
 3. Verify from the client: `curl -s http://<mac-tailnet-ip>:7433/v0/healthz`.
 
 The daemon binds all interfaces by default; rely on the tailnet ACLs for
-access control (v0 has no auth of its own — do not expose the port to the
-public internet).
+access control (v0 has no auth by default — do not expose the port to
+the public internet). As defense in depth, `--auth-token` (env
+`MANZANASD_AUTH_TOKEN`) on the daemon and broker requires a shared
+bearer token on everything except `GET /v0/healthz`:
+
+```sh
+# daemon and broker each gate their own API:
+manzanasd --auth-token "$TOKEN"
+manzanas-broker --auth-token "$TOKEN" --daemon-token "$TOKEN" --host emac=100.64.0.1:7433
+
+# clients:
+manzanas --token "$TOKEN" --daemon 100.64.0.1:7440 fleet hosts   # or env MANZANAS_TOKEN
+```
+
+The broker authenticates to its daemons with `--daemon-token` (env
+`MANZANAS_BROKER_DAEMON_TOKEN`) or a per-host `"token"` in the config
+file's host entries. Keep one shared token across broker and daemons
+whenever the bundled clients are in play: the broker dashboard's live
+view presents the browser's token directly to each daemon, and the CLI
+/ MCP clients follow a lease's `host_addr` to the owning daemon with
+the same `--token` they used for the broker — a split token gets every
+lease-scoped call (boot, actions, streams, journal, release) rejected
+with 401 by the daemon. Split broker/daemon tokens only work for raw
+API clients that talk to the broker alone. A config file carrying
+per-host tokens holds credentials in plaintext — keep it `chmod 600`.
+
+The broker's per-host `build` column in
+`/v0/fleet/hosts` (and its dashboard) makes daemon version skew visible
+during rolling upgrades.
 
 ## SSH onboarding (per new Mac)
 

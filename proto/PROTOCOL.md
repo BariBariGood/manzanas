@@ -25,6 +25,8 @@ truth; this document describes semantics.
   structured predicate matched several elements and no `index` picked
   one; the message lists the candidates), `focus_required` (`412` — a
   typing action with `require_focus:true` found no focused text field),
+  `unauthorized` (`401` — the daemon/broker runs with `--auth-token` and
+  the request carried a missing or wrong bearer token),
   `internal`. Two additive
   optional fields: `detail` carries actionable context when the daemon
   has any (e.g. a `target_not_booted` error against a leased target
@@ -33,7 +35,22 @@ truth; this document describes semantics.
   retry hint on transient refusals (`overloaded`), mirrored in an HTTP
   `Retry-After` header.
 - Timestamps are RFC 3339 UTC.
-- `GET /v0/healthz` returns `200 {"ok":true,"version":"v0"}`.
+- `GET /v0/healthz` returns `200 {"ok":true,"version":"v0","build":"v0.4.0"}`.
+  `version` is the protocol version; `build` (additive) is the binary's
+  build version stamped at link time (`git describe` / release tag;
+  `"dev"` for unstamped builds). The broker's healthz additionally
+  carries `role` and `hosts`.
+- Authentication (optional): daemons and brokers started with
+  `--auth-token <t>` (env `MANZANASD_AUTH_TOKEN` /
+  `MANZANAS_BROKER_AUTH_TOKEN`) require the shared token on every
+  endpoint except `GET /v0/healthz`, CORS preflights, and the dashboard /
+  view-page static assets. Clients send `Authorization: Bearer <t>`;
+  browser contexts that cannot set headers (the MJPEG `<img>`, the
+  events WebSocket, view links) may use a `?token=<t>` query parameter
+  instead. Failures are `401 unauthorized`. With no `--auth-token`
+  (the default) nothing changes: the open, tailnet-trust model. The
+  broker authenticates to fronted daemons with per-host tokens (config
+  `token` per host, or the fleet-wide `--daemon-token` default).
 - `GET /v0/status` returns the daemon's load/occupancy snapshot for fleet
   schedulers (`HostStatus`): `capacity` (`max_booted_running`,
   `max_parked`, `max_concurrent_boots`; zeros = no warm pool/uncapped),
@@ -45,7 +62,8 @@ truth; this document describes semantics.
   down — never deleted — because their fleet lock file was stale or
   missing; only non-zero with stale-lock reaping opted in),
   `parked`, `boots_in_flight`, `leases_active`, `leases_queued`,
-  `load_avg1`, `cpus`, `free_disk_bytes`, and `gates`
+  `load_avg1`, `cpus`, `free_disk_bytes`, `build` (optional/additive:
+  the daemon's build version), and `gates`
   (`load_ok`/`disk_ok` — a false gate means a cold boot would be refused
   right now). When advice has been received (below), the snapshot also
   carries `pool_advice` (`PoolAdviceState`: `source`, `received_at`,
@@ -214,8 +232,12 @@ operation on a target requires an active lease.
 
 A `Lease` served by a federating broker additionally carries `host` and
 `host_addr` (the owning daemon's base URL): clients should perform all
-target-bound ops (boot, actions, streams, state) against `host_addr`
-directly. See [docs/broker.md](../docs/broker.md).
+target-bound ops (boot, actions, streams, state, recording, journal)
+against `host_addr` directly. The bundled `manzanas` CLI and MCP facade
+do this automatically (their shared client caches `lease_id → host_addr`
+and routes lease-scoped calls to the owning daemon); custom raw-HTTP
+clients must follow `host_addr` themselves. See
+[docs/broker.md](../docs/broker.md).
 
 Expiry and the renewal grace window: when an active lease passes its
 nominal `expires_at`, it does **not** expire immediately. It first enters
@@ -721,6 +743,14 @@ Capture starts on the first viewer attach and stops `--stream-linger`
 entirely (no frame accepted for 30s) is disconnected so it does not pin a
 viewer slot.
 
+`POST /v0/streams` (and its `OPTIONS` preflight) carries permissive CORS
+headers (`Access-Control-Allow-Origin: *`): the broker's aggregated
+dashboard is served from the broker's origin but negotiates streams
+directly against each owning daemon. Only stream negotiation is
+cross-origin-readable — the MJPEG media rides in an `<img>`, which needs
+no CORS — and the v0 API carries no credentials to leak (the trust model
+is the network boundary, unchanged).
+
 ## 7. State engine (owned by the state slice)
 
 Deterministic environment control: snapshots of shutdown sims, fixtures,
@@ -847,7 +877,9 @@ Every mutating protocol op under a lease is journaled: lease lifecycle
 (including expiry, as `leases.expire`), target boot/shutdown, actions,
 artifact ingest, the mutating state ops (`state.snapshot`, `state.restore`,
 `state.erase`, `state.fixture`, `state.snapshots.delete` — kind `state`),
-and the post-lease auto-reset (`state.reset`).
+and the post-lease auto-reset (`state.reset`). One-call runs (§9)
+additionally journal their lifecycle as kind `run` (`runs.start` /
+`runs.finish`).
 
 - `GET /v0/journal` → `200 {"runs":[RunSummary, ...]}` — newest first.
 - `GET /v0/journal/{run}?from_seq=&limit=` →
@@ -877,3 +909,60 @@ and the post-lease auto-reset (`state.reset`).
   entries stream as `journal.entry` events on the same connection.
   Subscriptions last for the connection's lifetime; one per run, at most
   16 per connection (duplicates or excess → `400 bad_request`).
+
+## 9. Runs (owned by the runs slice)
+
+The one-call run primitive: a single declarative request that executes the
+whole canonical loop — acquire lease → boot → fixtures → install app →
+launch → steps → artifact capture → release lease (applying its reset) —
+so agents don't hand-sequence a dozen calls. Every stage reuses the
+existing machinery: the lease manager (§3, including queueing and label
+matching), target boot (§2), the state engine (§7) for fixtures/reset,
+action dispatch (§5) for app lifecycle and steps, and the journal (§8)
+for evidence. A run's journal is therefore indistinguishable from the
+same loop done call-by-call; the journal run ID **is** the run's lease ID.
+
+Wire types live in `proto/runs.go`; the YAML run-spec (same schema,
+consumed by `manzanas run spec.yaml` and the MCP `run` tool) is documented
+in [`docs/runs.md`](../docs/runs.md).
+
+- `POST /v0/runs` with `{"spec": RunSpec, "agent_id": "...", "async": bool}`
+  → sync (default): `200 Run` once the run finishes (bounded by the
+  spec's `timeouts.run_seconds`, default 600 s, max 3480 s — the lease
+  TTL cap minus the run's TTL margin); run-level
+  failure is reported in `Run.state`/`Run.error`, not the HTTP status.
+  With `"async": true` → `202 Run` (state `pending`) immediately; poll
+  `GET /v0/runs/{id}`. Rejections before any lease is taken:
+  `400 bad_request` (malformed spec, missing `agent_id` — `session_id`
+  is accepted as an alias, like `leases.acquire`), `501 not_implemented`
+  (reserved features: `target.image`, `maestro_flow` steps; or a spec
+  needing a slice this build lacks), `503 overloaded` (too many runs in
+  flight; carries `retry_after_seconds`).
+- `GET /v0/runs` → `200 {"runs":[Run,...]}` — retained runs, newest
+  first, without `export_md` (fetch a single run for the export).
+- `GET /v0/runs/{id}` → `200 Run` | `404 not_found`. Run resources are
+  in-memory (the durable record is the journal); finished runs are
+  retained on a bounded LRU.
+
+The broker serves the same three routes federated: `POST /v0/runs` places
+the run on a candidate host (the same warm-first ranking as lease
+scheduling) and proxies it there, `GET /v0/runs` is the union of all up
+hosts' retained runs, and `GET /v0/runs/{id}` routes to the owning
+daemon. Broker-returned runs additionally carry `host`/`host_addr`
+(additive, like `Lease`) — see [`docs/broker.md`](../docs/broker.md).
+
+`Run` reports `state` (`pending|running|passed|failed`), `stage` (which
+stage is executing or failed: `acquire`, `boot`, `fixtures`, `install`,
+`launch`, `steps`, `artifacts`, `release`), `lease_id` (= journal run ID),
+`target_udid`, per-step results (`status` `ok|error|skipped`, wire `error`,
+`duration_ms`, `journal_ref`), the first failure as `error`, and — once
+finished, when `artifacts.export` is true (the default) and the journal is
+enabled — `export_md`, the same markdown evidence summary as
+`GET /v0/journal/{run}/export.md`.
+
+The lease is always released (running its reset) when the run ends,
+whatever failed; an abandoned queued acquire is released too. Steps run
+with `stop-on-first-failure` semantics unless a step sets
+`continue_on_error` (such steps still run after an earlier failure, and
+their own failure doesn't halt later `continue_on_error` steps, but any
+step failure makes the run `failed`).

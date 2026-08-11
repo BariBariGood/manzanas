@@ -35,6 +35,12 @@ func (a *appEnv) newFlagSet(name string) *flag.FlagSet {
 	fs.BoolVar(&a.json, "json", a.json, "machine-readable JSON output")
 	fs.Func("daemon", "daemon address", func(v string) error {
 		a.client = client.New(v)
+		a.client.SetToken(a.token)
+		return nil
+	})
+	fs.Func("token", "bearer token", func(v string) error {
+		a.token = v
+		a.client.SetToken(v)
 		return nil
 	})
 	return fs

@@ -17,10 +17,14 @@ const DefaultProbeTimeout = 3 * time.Second
 
 // HostHealth is the broker's view of one daemon, served at /v0/fleet/hosts.
 type HostHealth struct {
-	Name      string     `json:"name"`
-	Addr      string     `json:"addr"`
-	Labels    []string   `json:"labels,omitempty"`
-	Up        bool       `json:"up"`
+	Name   string   `json:"name"`
+	Addr   string   `json:"addr"`
+	Labels []string `json:"labels,omitempty"`
+	Up     bool     `json:"up"`
+	// Build is the daemon's build version from its last successful
+	// healthz probe (empty for daemons predating the field). Version
+	// skew across hosts is visible by comparing this column.
+	Build     string     `json:"build,omitempty"`
 	LastError string     `json:"last_error,omitempty"`
 	LastProbe *time.Time `json:"last_probe,omitempty"` // nil until first probe
 	// Targets is the number of targets the host reported on its last
@@ -43,6 +47,7 @@ type host struct {
 
 	mu        sync.Mutex
 	up        bool
+	build     string // daemon build version from the last successful healthz
 	lastError string
 	lastProbe time.Time
 	listed    bool           // a target listing has succeeded at least once
@@ -117,6 +122,7 @@ func (h *host) health() HostHealth {
 		Addr:      h.cfg.Addr,
 		Labels:    h.cfg.Labels,
 		Up:        h.up,
+		Build:     h.build,
 		LastError: h.lastError,
 		LastProbe: func() *time.Time {
 			if h.lastProbe.IsZero() {
@@ -251,9 +257,10 @@ func (b *Broker) probe(ctx context.Context, h *host) {
 	defer cancel()
 
 	var healthz struct {
-		OK bool `json:"ok"`
+		OK    bool   `json:"ok"`
+		Build string `json:"build"`
 	}
-	err := b.client.getJSON(ctx, h.cfg.Addr+"/v0/healthz", &healthz)
+	err := b.client.getJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/healthz", &healthz)
 	now := time.Now().UTC()
 
 	if err != nil || !healthz.OK {
@@ -282,6 +289,7 @@ func (b *Broker) probe(ctx context.Context, h *host) {
 	h.mu.Lock()
 	wasUp := h.up
 	h.up = true
+	h.build = healthz.Build
 	if !wasUp {
 		// A bounced host may be a new build (re-probe advise support)
 		// and lost its in-memory advice copy (re-push even when the
@@ -314,6 +322,7 @@ func (b *Broker) probe(ctx context.Context, h *host) {
 	// bumps must be absorbed by the setStats reset rather than drive the
 	// bump negative against a snapshot that never counted them.
 	b.reconcileLeases(outer, h)
+	b.reconcileRuns(outer, h)
 
 	b.fetchStats(outer, h, now)
 }
@@ -327,7 +336,7 @@ func (b *Broker) fetchStats(ctx context.Context, h *host, now time.Time) {
 	sctx, cancel := context.WithTimeout(ctx, b.probeTimeout)
 	defer cancel()
 	var st proto.HostStatus
-	code, err := b.client.getJSONCode(sctx, h.cfg.Addr+"/v0/status", &st)
+	code, err := b.client.getJSONCode(sctx, h.cfg.Token, h.cfg.Addr+"/v0/status", &st)
 	if err == nil {
 		h.setStats(&st, now)
 		return

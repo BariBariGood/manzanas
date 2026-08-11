@@ -31,11 +31,28 @@
 <script>
 (async () => {
   const udid = decodeURIComponent(location.pathname.split("/").pop());
+  // On an --auth-token daemon the link carries ?token=; it is also kept
+  // in localStorage so a reload without the query still works.
+  const TOKEN_KEY = "manzanas_token";
+  const u = new URL(location.href);
+  const qtoken = u.searchParams.get("token");
+  if (qtoken) {
+    try { localStorage.setItem(TOKEN_KEY, qtoken); } catch { /* private mode */ }
+    u.searchParams.delete("token");
+    history.replaceState(null, "", u);
+  }
+  const token = qtoken || (() => {
+    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+  })();
+  const authHeaders = token ? { Authorization: "Bearer " + token } : {};
+  const withToken = (url) => token
+    ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token)
+    : url;
   const status = document.getElementById("status");
   const fail = (msg) => { status.textContent = msg; status.classList.add("err"); };
 
   try {
-    const tr = await fetch("/v0/targets");
+    const tr = await fetch("/v0/targets", { headers: authHeaders });
     const { targets } = await tr.json();
     const t = (targets || []).find((x) => x.udid === udid);
     const meta = document.getElementById("target-meta");
@@ -58,7 +75,7 @@
   try {
     const sr = await fetch("/v0/streams", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({ udid, format: "mjpeg" }),
     });
     const offer = await sr.json();
@@ -67,7 +84,7 @@
       ? `lease: ${offer.holder.agent_id} (${offer.holder.state})`
       : "lease: none (target is free)";
     status.textContent = `stream ${offer.stream_id} · mjpeg`;
-    document.getElementById("screen").src = offer.mjpeg_url;
+    document.getElementById("screen").src = withToken(offer.mjpeg_url);
   } catch (e) {
     fail(`stream error: ${e}`);
   }

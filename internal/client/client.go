@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BariBariGood/manzanas/proto"
@@ -55,10 +56,17 @@ func IsLeaseLost(err error) bool {
 	return ae.Code == proto.ErrLeaseExpired || ae.Code == proto.ErrNotFound
 }
 
-// Client speaks the manzanasd v0 HTTP protocol.
+// Client speaks the manzanasd v0 HTTP protocol. Pointed at a
+// manzanas-broker, it follows the host_addr annotation on leases so
+// lease-scoped calls reach the owning daemon transparently (see route.go).
 type Client struct {
-	base string
-	http *http.Client
+	base  string
+	token string
+	http  *http.Client
+
+	mu      sync.Mutex
+	routes  map[string]string  // lease_id -> owning daemon base URL
+	derived map[string]*Client // daemon base URL -> derived client
 }
 
 // New creates a Client for the daemon at addr ("host:port" or full URL).
@@ -84,6 +92,30 @@ func New(addr string) *Client {
 // Addr returns the base URL the client talks to.
 func (c *Client) Addr() string { return c.base }
 
+// SetToken sets the bearer token sent as Authorization on every request,
+// for daemons/brokers running with --auth-token. Empty disables it. The
+// token propagates to the per-host clients derived for broker
+// transparency, so a change applies to every daemon this client talks to.
+func (c *Client) SetToken(token string) {
+	c.mu.Lock()
+	c.token = token
+	derived := make([]*Client, 0, len(c.derived))
+	for _, d := range c.derived {
+		derived = append(derived, d)
+	}
+	c.mu.Unlock()
+	for _, d := range derived {
+		d.SetToken(token)
+	}
+}
+
+// Token returns the configured bearer token (empty when auth is off).
+func (c *Client) Token() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.token
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var rdr io.Reader
 	var ctype string
@@ -107,6 +139,9 @@ func (c *Client) doReader(ctx context.Context, method, path, contentType string,
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if t := c.Token(); t != "" {
+		req.Header.Set("Authorization", "Bearer "+t)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

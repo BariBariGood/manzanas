@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
+	"github.com/BariBariGood/manzanas/internal/actions/mockapp"
 	"github.com/BariBariGood/manzanas/internal/actions/wda"
+	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	"github.com/BariBariGood/manzanas/internal/journal"
 	"github.com/BariBariGood/manzanas/internal/lease"
 	"github.com/BariBariGood/manzanas/internal/record"
@@ -89,9 +91,6 @@ func defaultStateDir() string {
 	}
 	return filepath.Join(home, ".manzanasd")
 }
-
-// version is stamped at build time via -ldflags "-X main.version=...".
-var version = "dev"
 
 // parseDeviceWDA parses the --device-wda flag: comma-separated
 // "<udid>=<url>" pairs mapping a device to its WebDriverAgent endpoint.
@@ -202,12 +201,14 @@ func main() {
 		streamMaxFPS     = flag.Int("stream-max-fps", stream.DefaultMaxFPS, "max stream capture rate (frames/sec)")
 		streamLinger     = flag.Duration("stream-linger", stream.DefaultLinger, "how long a stream keeps capturing after its last viewer leaves")
 
+		authToken = flag.String("auth-token", envOr("MANZANASD_AUTH_TOKEN", ""), "shared bearer token; when set, every v0 endpoint except GET /v0/healthz requires Authorization: Bearer <token> (or ?token=); empty disables auth (env MANZANASD_AUTH_TOKEN)")
+
 		dashReadonly = flag.Bool("dash-readonly", envBool("MANZANASD_DASH_READONLY"), "disable the dashboard's mutating controls (boot/shutdown/release/stop-recording); the rest of the v0 API is unaffected (env MANZANASD_DASH_READONLY)")
 	)
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("manzanasd %s (protocol %s)\n", version, proto.Version)
+		fmt.Printf("manzanasd %s (protocol %s)\n", buildinfo.Version, proto.Version)
 		return
 	}
 
@@ -318,6 +319,10 @@ func main() {
 
 	srv := server.New(reg, nil, log)
 	srv.SetDashReadonly(*dashReadonly)
+	srv.SetAuthToken(*authToken)
+	if *authToken != "" {
+		log.Info("bearer-token auth enabled (all endpoints except GET /v0/healthz require the token)")
+	}
 	if pool != nil {
 		// Streams refuse parked pool sims: frame capture against a
 		// SIGSTOPped tree hangs; a lease thaws them.
@@ -335,27 +340,45 @@ func main() {
 		srv.SetImages(imgs)
 	}
 
-	var actOpts []actions.Option
-	if *axePath != "" {
-		actOpts = append(actOpts, actions.WithAXePath(*axePath))
-	}
-	cold := actions.NewAXe(actOpts...)
-	if cold.AXeAvailable() {
-		log.Info("actions backend ready", "axe", cold.AXePath())
-	} else {
-		log.Warn("AXe not found; HID and observe actions will return 'unavailable' (install github.com/cameroncooke/AXe at ~/bin/axe)")
-	}
-	var backend actions.Backend = cold
+	var backend actions.Backend
 	var warmBackend *actions.WarmBackend
-	if bridgePath := actions.DetectSimbridge(*simbridge); bridgePath != "" && !*warmOff {
-		warmBackend = actions.NewWarm(cold,
-			func(udid string) (actions.Helper, error) { return actions.NewProcHelper(bridgePath, udid) },
-			actions.PoolConfig{MaxTargets: *warmMax, IdleTTL: *warmTTL, Logger: log})
-		defer warmBackend.Close()
-		backend = warmBackend
-		log.Info("warm actions backend ready", "simbridge", bridgePath, "max_targets", *warmMax, "idle_ttl", *warmTTL)
-	} else if !*warmOff {
-		log.Info("simbridge not found; actions use the cold AXe path (build helpers/simbridge to enable warm actions)")
+	// mockStore backs the mock action backend and the mock stream frames;
+	// non-nil exactly when the daemon runs against the mock registry.
+	var mockStore *mockapp.Store
+	if *mock || runtime.GOOS != "darwin" {
+		// Mock targets get the synthetic-UI action backend: the real
+		// AXeBackend handlers over an in-process fake app instead of
+		// AXe/simctl processes, so the full element/observe/audit loop
+		// runs off-Mac (see docs/mock.md).
+		mockStore = mockapp.NewStore()
+		booted := func(ctx context.Context, udid string) bool {
+			st, err := reg.Health(ctx, udid)
+			return err == nil && st == proto.StateBooted
+		}
+		backend = mockapp.NewBackend(mockStore, mockapp.WithBooted(booted))
+		log.Info("actions backend ready", "backend", "mock")
+	} else {
+		var actOpts []actions.Option
+		if *axePath != "" {
+			actOpts = append(actOpts, actions.WithAXePath(*axePath))
+		}
+		cold := actions.NewAXe(actOpts...)
+		if cold.AXeAvailable() {
+			log.Info("actions backend ready", "axe", cold.AXePath())
+		} else {
+			log.Warn("AXe not found; HID and observe actions will return 'unavailable' (install github.com/cameroncooke/AXe at ~/bin/axe)")
+		}
+		backend = cold
+		if bridgePath := actions.DetectSimbridge(*simbridge); bridgePath != "" && !*warmOff {
+			warmBackend = actions.NewWarm(cold,
+				func(udid string) (actions.Helper, error) { return actions.NewProcHelper(bridgePath, udid) },
+				actions.PoolConfig{MaxTargets: *warmMax, IdleTTL: *warmTTL, Logger: log})
+			defer warmBackend.Close()
+			backend = warmBackend
+			log.Info("warm actions backend ready", "simbridge", bridgePath, "max_targets", *warmMax, "idle_ttl", *warmTTL)
+		} else if !*warmOff {
+			log.Info("simbridge not found; actions use the cold AXe path (build helpers/simbridge to enable warm actions)")
+		}
 	}
 	stopWDASupervisors := func() {}
 	if *devices {
@@ -626,7 +649,14 @@ func main() {
 	}
 
 	sourceFactory := stream.SimctlSourceFactory
-	if *mock || runtime.GOOS != "darwin" {
+	if mockStore != nil {
+		// Mock streams render the mock backend's synthetic UI, so /view
+		// and /dash show the same screen the actions drive.
+		sourceFactory = func(udid string) (stream.FrameSource, error) {
+			app := mockStore.App(udid)
+			return stream.NewFakeSourceFrames(udid, app.RenderJPEG), nil
+		}
+	} else if *mock || runtime.GOOS != "darwin" {
 		sourceFactory = stream.FakeSourceFactory
 	}
 	streamer := stream.NewManager(stream.Config{
@@ -662,7 +692,7 @@ func main() {
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Info("manzanasd listening", "addr", ln.Addr().String(), "protocol", proto.Version)
+	log.Info("manzanasd listening", "addr", ln.Addr().String(), "version", buildinfo.Version, "protocol", proto.Version)
 	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, err)
 		// os.Exit skips deferred cleanup, so run it explicitly: stop and

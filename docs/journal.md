@@ -88,7 +88,9 @@ recovered from the line's prefix so a restart never reuses it.
 Entry **kinds**: `lease` (lease lifecycle), `action` (HID/target ops),
 `observation` (a11y describes, screenshots), `state` (snapshot/restore/
 erase/fixture/snapshot-delete ops and the post-lease auto-reset,
-`state.reset`), `segment` (video segment refs). Payload keys:
+`state.reset`), `segment` (video segment refs), `run` (one-call run
+lifecycle: `runs.start` / `runs.finish`, with the run ID and spec name as
+the payload keys `run` / `name`). Payload keys:
 
 | Key | When | Meaning |
 |---|---|---|

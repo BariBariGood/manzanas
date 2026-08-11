@@ -103,6 +103,45 @@ func streamErrStatus(code string) int {
 	}
 }
 
+// corsStreams marks stream negotiation as cross-origin-readable: the
+// broker's aggregated dashboard is served from the broker's origin but
+// negotiates streams directly against each owning daemon (media never
+// flows through the broker). Only this endpoint gets CORS headers — the
+// MJPEG media itself rides in an <img>, which needs none. With no
+// --auth-token the wildcard preserves the open tailnet-only model; with
+// a token the request only reaches this handler after the auth
+// middleware validated it, and the origin is echoed back (never *) so
+// only token-holding pages can read the response.
+func (s *Server) corsStreams(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.setStreamsCORS(w, r)
+		h(w, r)
+	}
+}
+
+func (s *Server) setStreamsCORS(w http.ResponseWriter, r *http.Request) {
+	if s.authToken == "" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+	}
+}
+
+// handleStreamsPreflight answers the browser's CORS preflight for
+// POST /v0/streams (a JSON content type makes it a non-simple request).
+// Preflights are auth-exempt by construction (they carry no credentials);
+// the Authorization header is allowed so token-bearing pages can follow up.
+func (s *Server) handleStreamsPreflight(w http.ResponseWriter, r *http.Request) {
+	s.setStreamsCORS(w, r)
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Max-Age", "600")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleOpenStream(w http.ResponseWriter, r *http.Request) {
 	var req proto.StreamRequest
 	if !decodeJSON(w, r, &req) {

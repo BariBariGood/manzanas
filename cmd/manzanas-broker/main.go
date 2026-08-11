@@ -20,11 +20,9 @@ import (
 	"time"
 
 	"github.com/BariBariGood/manzanas/internal/broker"
+	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	"github.com/BariBariGood/manzanas/proto"
 )
-
-// version is stamped at build time via -ldflags "-X main.version=...".
-var version = "dev"
 
 // hostFlags collects repeatable --host flags.
 type hostFlags []broker.HostConfig
@@ -65,13 +63,17 @@ func main() {
 		probeTimeout = flag.Duration("probe-timeout", broker.DefaultProbeTimeout,
 			"health-check timeout per probe")
 		showVersion = flag.Bool("version", false, "print version and exit")
+		authToken   = flag.String("auth-token", envOr("MANZANAS_BROKER_AUTH_TOKEN", ""),
+			"shared bearer token; when set, every broker endpoint except GET /v0/healthz requires Authorization: Bearer <token> (or ?token=); empty disables auth (env MANZANAS_BROKER_AUTH_TOKEN)")
+		daemonToken = flag.String("daemon-token", envOr("MANZANAS_BROKER_DAEMON_TOKEN", ""),
+			"default bearer token sent to fronted daemons running with --auth-token; a per-host token in the --config file overrides it; keep it equal to --auth-token when using the bundled CLI/MCP clients or the dashboard live view, which present the client's token directly to daemons (env MANZANAS_BROKER_DAEMON_TOKEN)")
 	)
 	flag.Var(&hosts, "host",
 		"daemon to front, as [name=]addr[,label,...]; repeatable (env MANZANAS_BROKER_HOSTS, ';'-separated)")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("manzanas-broker %s (protocol %s)\n", version, proto.Version)
+		fmt.Printf("manzanas-broker %s (protocol %s)\n", buildinfo.Version, proto.Version)
 		return
 	}
 
@@ -104,7 +106,12 @@ func main() {
 	b := broker.New(cfg, log, broker.Options{
 		ProbeInterval: *probeInterval,
 		ProbeTimeout:  *probeTimeout,
+		AuthToken:     *authToken,
+		DaemonToken:   *daemonToken,
 	})
+	if *authToken != "" {
+		log.Info("bearer-token auth enabled (all endpoints except GET /v0/healthz require the token)")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -132,7 +139,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	log.Info("manzanas-broker listening", "addr", ln.Addr().String(), "hosts", len(cfg.Hosts), "protocol", proto.Version)
+	log.Info("manzanas-broker listening", "addr", ln.Addr().String(), "hosts", len(cfg.Hosts), "version", buildinfo.Version, "protocol", proto.Version)
 	if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -11,6 +11,10 @@ The warm backend removes it by keeping a **resident helper process per
 simulator** — `simbridge` — that bootstraps once and then services
 actions over stdin/stdout JSON lines in a few milliseconds each.
 
+(A third backend serves mock targets: `manzanasd --mock` routes the same
+handlers to an in-process synthetic app so the full action loop runs
+off-Mac — see [mock.md](mock.md).)
+
 ```
 POST /v0/actions ─► WarmBackend ──(warm kind + helper alive)──► Pool ─► simbridge --udid X   (resident)
                         │                                                 │ FBSimulatorControl, connected once

@@ -15,7 +15,7 @@ builds:
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X github.com/BariBariGood/manzanas/internal/buildinfo.Version={{.Version}}
   - id: manzanas
     main: ./cmd/manzanas
     binary: manzanas
@@ -24,7 +24,7 @@ builds:
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X github.com/BariBariGood/manzanas/internal/buildinfo.Version={{.Version}}
   - id: manzanas-broker
     main: ./cmd/manzanas-broker
     binary: manzanas-broker
@@ -33,7 +33,7 @@ builds:
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X github.com/BariBariGood/manzanas/internal/buildinfo.Version={{.Version}}
 
 archives:
   - id: default

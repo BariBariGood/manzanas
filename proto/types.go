@@ -74,6 +74,9 @@ type HostGates struct {
 // GET /v0/status. All fields are additive; schedulers must tolerate
 // daemons that do not serve the endpoint at all (404).
 type HostStatus struct {
+	// Build is the daemon's build version (git describe / release tag,
+	// "dev" for unstamped builds). Additive (v0).
+	Build    string       `json:"build,omitempty"`
 	Capacity HostCapacity `json:"capacity"`
 	// Running counts Booted, un-parked simulators.
 	Running int `json:"running"`
@@ -539,5 +542,6 @@ const (
 	ErrAmbiguousMatch  = "ambiguous_match"   // an element predicate matched several elements and no index picked one
 	ErrFocusRequired   = "focus_required"    // a typing action with require_focus found no focused text field (no on-screen keyboard)
 	ErrReadOnly        = "read_only"         // dashboard controls disabled (--dash-readonly)
+	ErrUnauthorized    = "unauthorized"      // missing or wrong bearer token on an --auth-token daemon/broker
 	ErrInternal        = "internal"
 )

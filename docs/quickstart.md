@@ -112,4 +112,6 @@ acquire gives you a clean simulator every time.
 - Multiple Macs behind one endpoint: [broker.md](broker.md) and
   [fleet.md](fleet.md).
 - No Mac handy? `manzanasd --mock` runs anywhere (Linux/CI) with a fake
-  fleet for client development.
+  fleet and a full mock action backend — the whole
+  lease→observe→tap→audit loop against a synthetic app screen
+  ([mock.md](mock.md)).

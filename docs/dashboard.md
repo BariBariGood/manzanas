@@ -1,5 +1,11 @@
 # Web dashboard
 
+There are two embedded dashboards: each `manzanasd` daemon serves its own
+single-host dashboard (this page), and `manzanas-broker` serves an
+aggregated fleet-wide one at `http://<broker>:7440/dash/` — see
+[the broker dash section below](#broker-dashboard-aggregated-fleet-view)
+and [broker.md](broker.md).
+
 The daemon serves a built-in fleet dashboard at
 `http://<daemon-addr>/dash/`. It ships embedded in the `manzanasd` binary
 (no extra install, works offline) and talks to the daemon's own v0 API from
@@ -75,10 +81,43 @@ guard for shared viewing, not a security boundary. Automatic per-sim video
 thumbnails remain off by design — see the Multiview tab's opt-in tiles and
 [streaming.md](streaming.md).
 
+## Broker dashboard (aggregated fleet view)
+
+`manzanas-broker` serves its own embedded dashboard at
+`http://<broker-addr>/dash/`: one page aggregating targets, leases, and
+per-host health across every daemon the broker fronts, plus a fleet-wide
+Multiview tab with one tile per booted un-parked simulator on ANY host.
+It reuses this dashboard's look and resource model — streams stay
+strictly opt-in per tile — but is **read-only** (no boot/shutdown/release
+controls; use the owning daemon's dash for those) and poll-only (the
+broker has no WS surface; the page re-fetches `/v0/fleet/hosts`,
+`/v0/targets`, and `/v0/leases` every 5 seconds). An unreachable host is
+shown as down with its probe error while the rest of the fleet keeps
+rendering.
+
+Stream tiles and "live view" links honor the broker's
+scheduler-not-data-plane rule ([broker.md](broker.md)): the page
+negotiates each stream directly against the owning daemon's `host_addr`
+(`POST {host_addr}/v0/streams` — the reason that endpoint carries CORS
+headers) and attaches the MJPEG media from that daemon. The broker never
+proxies media.
+
 ## Trust model
 
-The dashboard has the same (lack of) auth as the rest of the v0 API: none.
-Access control is the network boundary — bind the daemon to loopback
+By default the dashboard has the same (lack of) auth as the rest of the
+v0 API: none. When the daemon or broker runs with `--auth-token`, the
+dashboard page itself still loads, but every API call it makes requires
+the token: open `/dash/?token=<t>` once (the token is stored in
+localStorage and stripped from the URL), or paste it into the prompt the
+page shows after the first `401`. Live-view links and MJPEG streams
+carry the token as `?token=` (browser `<img>`/WebSocket URLs cannot set
+headers). The broker dash presents the same stored token directly to
+each daemon for stream negotiation, so share one token across broker and
+daemons if you use its live view. The header also shows the running
+binary's build version, and the broker's hosts table adds a per-daemon
+Build column that highlights version skew.
+
+Otherwise, access control is the network boundary — bind the daemon to loopback
 (`--addr 127.0.0.1:7433`) or a private/tailnet interface, and never expose
 the port to the public internet. `GET /v0/leases`, the journal endpoints,
 and the `/v0/ws` event stream all carry full lease objects — including

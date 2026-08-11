@@ -93,7 +93,7 @@ var (
 // overload back-pressure) and polls until the target reports Booted.
 // Physical devices are never booted (the daemon cannot boot them).
 func bootLeasedTarget(ctx context.Context, s *Server, l proto.Lease) error {
-	tgt, err := leasedTarget(ctx, s, l.TargetUDID)
+	tgt, err := leasedTarget(ctx, s, l)
 	if err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func bootLeasedTarget(ctx context.Context, s *Server, l proto.Lease) error {
 	}
 	deadline := time.Now().Add(bootWaitBudget)
 	for {
-		tgt, err = leasedTarget(ctx, s, l.TargetUDID)
+		tgt, err = leasedTarget(ctx, s, l)
 		if err != nil {
 			return err
 		}
@@ -164,17 +164,21 @@ func endpointLacksBoot(err error) bool {
 	return ae.Status == http.StatusNotFound && ae.Code != proto.ErrNotFound
 }
 
-func leasedTarget(ctx context.Context, s *Server, udid string) (proto.Target, error) {
+// leasedTarget finds the lease's target in the target list. Against a
+// broker the list is a fleet-wide union in which the same UDID can appear
+// on several hosts, so when the lease carries a host annotation only that
+// host's entry counts.
+func leasedTarget(ctx context.Context, s *Server, l proto.Lease) (proto.Target, error) {
 	targets, err := s.client.ListTargets(ctx)
 	if err != nil {
 		return proto.Target{}, err
 	}
 	for _, t := range targets {
-		if t.UDID == udid {
+		if t.UDID == l.TargetUDID && (l.Host == "" || t.Host == "" || t.Host == l.Host) {
 			return t, nil
 		}
 	}
-	return proto.Target{}, fmt.Errorf("leased target %s not found in the target list", udid)
+	return proto.Target{}, fmt.Errorf("leased target %s not found in the target list", l.TargetUDID)
 }
 
 func toolLeaseRelease() Tool {

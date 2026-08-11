@@ -10,11 +10,16 @@ Linux box on the same tailnet as the Mac fleet.
 The broker only handles *placement*: target enumeration and lease
 scheduling. Every lease it returns is annotated with `host` (the owning
 host's name) and `host_addr` (the daemon's base URL); after acquiring a
-lease through the broker, clients talk to `host_addr` **directly** for
-everything target-bound — boot/shutdown, actions, streams, state. Media
-frames and action traffic never flow through the broker, so it adds no
-latency or bandwidth bottleneck and its failure never interrupts running
-work (only new placements).
+lease through the broker, everything target-bound — boot/shutdown,
+actions, streams, state, recording, the run journal — goes to `host_addr`
+**directly**. The `manzanas` CLI and the MCP facade do this
+**automatically**: their shared client caches `lease_id → host_addr` from
+every lease it sees and routes lease-scoped calls to the owning daemon, so
+pointing them at the broker address is all the configuration a fleet
+needs (raw-HTTP clients must follow `host_addr` themselves). Media frames
+and action traffic never flow through the broker, so it adds no latency
+or bandwidth bottleneck and its failure never interrupts running work
+(only new placements).
 
 ```
                         ┌ Mac host "emac" ──────────┐
@@ -132,6 +137,10 @@ works:
 | `POST /v0/leases` | federated acquire (below) |
 | `GET /v0/leases` | union of all healthy hosts' lease listings, each annotated with `host`/`host_addr` |
 | `GET/POST/DELETE /v0/leases/{id}[/renew]` | proxied to the owning daemon by lease ID |
+| `POST /v0/runs` | federated one-call run: placed on a candidate host (same warm-first ranking as leases) and proxied there; the returned run carries `host`/`host_addr` (below) |
+| `GET /v0/runs` | union of all healthy hosts' retained runs, newest first, annotated with `host`/`host_addr` |
+| `GET /v0/runs/{id}` | proxied to the daemon the run was placed on (falling back to asking each up host after a broker restart) |
+| `GET /dash/` | broker-specific: embedded aggregated fleet dashboard (below) |
 | `GET /v0/fleet/hosts` | broker-specific: host list + health |
 | `GET /v0/fleet/placements` | broker-specific: recent placement decisions with ranked candidates (below) |
 | `GET /v0/fleet/hints` | broker-specific: current warm-pool rebalancing hints per host (below) |
@@ -140,8 +149,72 @@ Unknown routes and wrong methods answer with the protocol's JSON error
 envelope (`404 not_found` / `405 bad_request`), matching every other
 error shape.
 
-Anything else (boot, actions, streams, state) is *not* served by the
-broker — use the lease's `host_addr`.
+Anything else (boot, actions, streams, state, recording, journal) is
+*not* served by the broker — it answers `404 not_found` with message
+`unknown route`. The bundled clients recognize that answer, resolve the
+lease's `host_addr` (via `GET /v0/leases/{id}` on the broker), and retry
+against the owning daemon transparently; a fresh process (each CLI
+invocation) recovers the route on its first lease-scoped call. Reading
+the journal of a *finished* run whose lease the broker has already
+forgotten falls back to trying each up host from `/v0/fleet/hosts`.
+Raw-HTTP clients should use the lease's `host_addr` directly.
+
+## Fleet dashboard
+
+The broker serves a built-in aggregated dashboard at
+`http://<broker-addr>/dash/` — one page showing every up simulator across
+the whole fleet. Like the daemon's dashboard it ships embedded in the
+`manzanas-broker` binary (no extra install, no new flags):
+
+```sh
+manzanas-broker --addr :7440 \
+  --host emac=http://100.64.0.1:7433,intel \
+  --host work=http://100.64.0.2:7433,intel
+# open http://<broker>:7440/dash/
+```
+
+- **Fleet tab** — per-host health (up/down with the probe's `last_error`,
+  labels, target and lease counts, last probe time) plus the federated
+  targets and leases tables, each row carrying its owning host. A "live
+  view" button per booted target opens the owning daemon's `/view/{udid}`
+  page. A down host is shown as down while every other host keeps working.
+- **Multiview tab** — one tile per booted, un-parked simulator target
+  across ALL hosts. Same resource model as the daemon dash: streams are
+  strictly opt-in per tile (click to start/stop, start all / stop all),
+  never always-on.
+
+The broker dash is **read-only** (no boot/shutdown/release controls) and
+polls the broker's own endpoints (`/v0/fleet/hosts`, `/v0/targets`,
+`/v0/leases`) every 5 seconds — the broker has no WS surface, and those
+listings are backed by cheap JSON GETs against each daemon.
+
+The scheduler-not-data-plane rule holds: clicking a tile negotiates the
+stream by POSTing `{host_addr}/v0/streams` **directly against the owning
+daemon** and attaches the offer's MJPEG URL on that daemon — media never
+flows through the broker. (That cross-origin negotiation is why the
+daemon's `POST /v0/streams` carries permissive CORS headers; see
+[PROTOCOL.md §6](../proto/PROTOCOL.md).) Trust model is unchanged: no
+auth, tailnet-only — see [dashboard.md](dashboard.md).
+
+## Federated runs
+
+`POST /v0/runs` ([docs/runs.md](runs.md)) works against the broker like
+against a daemon: the broker derives placement labels from the spec's
+`target` (labels plus the slugs from `runtime`/`device_type`; host-level
+labels pin the run to one Mac — alongside at least one target selector,
+since the daemon still needs one to pick a target on that Mac — and a
+pinned `udid` restricts candidates
+to hosts owning it), ranks candidate hosts exactly like a lease acquire
+(warm-first — a run *is* a lease acquire plus choreography), and proxies
+the run to the winner. The run executes entirely on the owning daemon —
+the broker only routes. Sync requests are served by submitting the run
+async to the daemon and polling it until the run finishes, so a
+multi-minute run never holds a long broker→daemon HTTP call; `async`
+requests answer `202` immediately and `GET /v0/runs/{id}` polls through
+the broker. Spec problems (`400`/`501`) are forwarded from the daemon
+verbatim; capacity refusals (`503 overloaded`) try the next candidate.
+The returned run carries `host` and `host_addr` so raw clients can reach
+the run's journal on the owning daemon directly.
 
 ## Federated leasing
 
@@ -203,7 +276,10 @@ daemons, forgetting leases that ended behind the broker's back (TTL
 expiry, direct release against `host_addr`, daemon GC) so load counters
 and `/v0/fleet/hosts` stay accurate. Broker restarts lose that table — daemons still expire the
 leases by TTL, and clients that saved `host_addr` can renew/release
-against the daemon directly.
+against the daemon directly — the bundled CLI/MCP clients do exactly
+that automatically: lease control ops (get/renew/release) go through the
+broker while it answers, and fall back to the cached `host_addr` when the
+broker is unreachable or has forgotten the lease.
 
 Broker-local load counters still exist as the fallback for daemons
 without `/v0/status`, and as the intra-probe-interval bump for fresh

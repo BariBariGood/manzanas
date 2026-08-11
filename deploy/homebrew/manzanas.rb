@@ -14,7 +14,7 @@ class Manzanas < Formula
   depends_on "go" => :build
 
   def install
-    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "./cmd/manzanas"
+    system "go", "build", *std_go_args(ldflags: "-s -w -X github.com/BariBariGood/manzanas/internal/buildinfo.Version=#{version}"), "./cmd/manzanas"
   end
 
   test do

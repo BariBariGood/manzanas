@@ -174,7 +174,7 @@ func (b *Broker) adviseHosts(ctx context.Context) {
 			Classes:       hh.Classes,
 		}
 		actx, cancel := context.WithTimeout(ctx, b.probeTimeout)
-		err := b.client.postJSON(actx, h.cfg.Addr+"/v0/pool/advise", req, nil)
+		err := b.client.postJSON(actx, h.cfg.Token, h.cfg.Addr+"/v0/pool/advise", req, nil)
 		cancel()
 		if err == nil {
 			h.setAdvicePushed(key)

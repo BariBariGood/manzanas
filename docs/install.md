@@ -79,6 +79,26 @@ full path or add `export PATH="$HOME/bin:$PATH"` to your shell profile):
 curl -s localhost:7433/v0/healthz
 ```
 
+`--version` (and the `build` field in `/v0/healthz` and `/v0/status`)
+reports the build version stamped at link time: release binaries carry
+the release tag, `make build` stamps `git describe`, and a plain
+`go build` shows `dev`.
+
+### Optional shared-token auth
+
+By default the daemon has no auth — access control is the network
+boundary (tailnet/loopback). As defense in depth you can require a
+shared bearer token:
+
+```sh
+manzanasd --auth-token "$(openssl rand -hex 24)"   # or env MANZANASD_AUTH_TOKEN
+```
+
+With a token set, every endpoint except `GET /v0/healthz` requires
+`Authorization: Bearer <token>` (or `?token=` for browser-only URLs).
+Clients pass it with `manzanas --token <t>` (env `MANZANAS_TOKEN`); the
+dashboard prompts for it and keeps it in localStorage.
+
 ## manzanas CLI via npm
 
 The `manzanasd-client` package is **not yet published to npm**, and its

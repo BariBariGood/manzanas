@@ -27,25 +27,29 @@ func (e *daemonError) Error() string {
 	return fmt.Sprintf("%d %s: %s", e.Status, e.Err.Code, e.Err.Message)
 }
 
-func (c *daemonClient) getJSON(ctx context.Context, url string, out any) error {
-	return c.do(ctx, http.MethodGet, url, nil, out)
+// token is the per-host bearer token; empty sends no Authorization.
+func (c *daemonClient) getJSON(ctx context.Context, token, url string, out any) error {
+	return c.do(ctx, token, http.MethodGet, url, nil, out)
 }
 
-func (c *daemonClient) postJSON(ctx context.Context, url string, in, out any) error {
-	return c.do(ctx, http.MethodPost, url, in, out)
+func (c *daemonClient) postJSON(ctx context.Context, token, url string, in, out any) error {
+	return c.do(ctx, token, http.MethodPost, url, in, out)
 }
 
-func (c *daemonClient) deleteJSON(ctx context.Context, url string, out any) error {
-	return c.do(ctx, http.MethodDelete, url, nil, out)
+func (c *daemonClient) deleteJSON(ctx context.Context, token, url string, out any) error {
+	return c.do(ctx, token, http.MethodDelete, url, nil, out)
 }
 
 // getJSONCode is getJSON returning the HTTP status code alongside, for
 // callers where an absent endpoint (404/501 from an older daemon, in
 // any body shape) is an expected, non-error outcome.
-func (c *daemonClient) getJSONCode(ctx context.Context, url string, out any) (int, error) {
+func (c *daemonClient) getJSONCode(ctx context.Context, token, url string, out any) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -67,7 +71,7 @@ func (c *daemonClient) getJSONCode(ctx context.Context, url string, out any) (in
 	return resp.StatusCode, nil
 }
 
-func (c *daemonClient) do(ctx context.Context, method, url string, in, out any) error {
+func (c *daemonClient) do(ctx context.Context, token, method, url string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -82,6 +86,9 @@ func (c *daemonClient) do(ctx context.Context, method, url string, in, out any) 
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

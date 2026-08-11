@@ -7,11 +7,12 @@ import (
 	"github.com/BariBariGood/manzanas/proto"
 )
 
-// Dispatch calls POST /v0/actions with an opaque action payload. The
-// payload schemas below are the contract with the actions slice.
+// Dispatch calls POST /v0/actions with an opaque action payload, routed
+// to the daemon owning the lease. The payload schemas below are the
+// contract with the actions slice.
 func (c *Client) Dispatch(ctx context.Context, req proto.ActionRequest) (proto.ActionResult, error) {
 	var res proto.ActionResult
-	err := c.do(ctx, http.MethodPost, "/v0/actions", req, &res)
+	err := c.leaseDo(ctx, req.LeaseID, http.MethodPost, "/v0/actions", req, &res)
 	return res, err
 }
 

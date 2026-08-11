@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>manzanas-broker — fleet dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>manzanas-broker</h1>
+  <span class="meta" id="health">connecting…</span>
+  <span class="meta" id="fleet-summary"></span>
+  <span class="meta right" id="live-indicator" title="update mode">polling</span>
+</header>
+
+<nav id="tabs">
+  <button class="tab active" data-tab="fleet">Fleet</button>
+  <button class="tab" data-tab="multiview">Multiview</button>
+</nav>
+
+<main id="tab-fleet" class="tab-pane">
+  <section>
+    <h2>Hosts</h2>
+    <table id="hosts">
+      <thead><tr>
+        <th>Host</th><th>Address</th><th>Health</th><th>Labels</th>
+        <th>Build</th><th>Targets</th><th>Leases</th><th>Last probe</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="empty" id="hosts-empty" hidden>no hosts configured</p>
+  </section>
+  <section>
+    <h2>Targets</h2>
+    <table id="targets">
+      <thead><tr>
+        <th>Host</th><th>Name</th><th>Runtime</th><th>Device</th><th>State</th>
+        <th>Labels</th><th>UDID</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="empty" id="targets-empty" hidden>no targets on any reachable host</p>
+  </section>
+  <section>
+    <h2>Leases</h2>
+    <table id="leases">
+      <thead><tr>
+        <th>Host</th><th>Agent</th><th>Target</th><th>State</th><th>Purpose</th>
+        <th>Expires</th><th>Queue</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="empty" id="leases-empty" hidden>no leases on any reachable host</p>
+  </section>
+</main>
+
+<main id="tab-multiview" class="tab-pane" hidden>
+  <section>
+    <div class="mv-head">
+      <h2>Multiview</h2>
+      <span class="meta">click a tile to start/stop its live stream (served by the owning host)</span>
+      <button id="mv-start-all">start all</button>
+      <button id="mv-stop-all">stop all</button>
+    </div>
+    <div id="mv-grid"></div>
+    <p class="empty" id="mv-empty" hidden>no booted targets to view</p>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

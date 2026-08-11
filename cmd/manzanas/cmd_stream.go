@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -45,11 +46,13 @@ func cmdStream(ctx context.Context, app *appEnv, args []string) error {
 		return err
 	}
 	// The daemon returns paths relative to its own address; absolutize them
-	// so the printed value is directly usable in a browser or agent.
-	base := app.client.Addr()
-	offer.ViewURL = absURL(base, offer.ViewURL)
-	offer.MJPEGURL = absURL(base, offer.MJPEGURL)
-	offer.URL = wsURL(absURL(base, offer.URL))
+	// so the printed value is directly usable in a browser or agent. For a
+	// broker-acquired lease the client routed the request to the owning
+	// daemon, so absolutize against that address, not the broker's.
+	base := app.client.AddrForLease(req.LeaseID)
+	offer.ViewURL = withToken(absURL(base, offer.ViewURL), app.token)
+	offer.MJPEGURL = withToken(absURL(base, offer.MJPEGURL), app.token)
+	offer.URL = withToken(wsURL(absURL(base, offer.URL)), app.token)
 	return app.emit(offer, func(w io.Writer) {
 		link := offer.ViewURL
 		if link == "" {
@@ -60,6 +63,20 @@ func cmdStream(ctx context.Context, app *appEnv, args []string) error {
 		}
 		fmt.Fprintln(w, link)
 	})
+}
+
+// withToken appends a ?token= query parameter so the printed URL works
+// against an --auth-token daemon from contexts that cannot set an
+// Authorization header (a browser <img>, a bare WebSocket URL).
+func withToken(u, token string) string {
+	if u == "" || token == "" {
+		return u
+	}
+	sep := "?"
+	if strings.Contains(u, "?") {
+		sep = "&"
+	}
+	return u + sep + "token=" + url.QueryEscape(token)
 }
 
 func absURL(base, p string) string {

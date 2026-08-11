@@ -23,6 +23,10 @@ type HostConfig struct {
 	// Labels are extra labels this host contributes to all of its targets
 	// (e.g. ["emac", "intel"]), matchable in lease acquisition.
 	Labels []string `json:"labels,omitempty"`
+	// Token is the bearer token sent on every request to this daemon,
+	// for daemons running with --auth-token. Empty falls back to the
+	// broker's --daemon-token, then to no auth.
+	Token string `json:"token,omitempty"`
 }
 
 // Config is the broker's static host list.

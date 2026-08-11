@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	"github.com/BariBariGood/manzanas/proto"
 )
 
@@ -19,9 +20,14 @@ type Broker struct {
 	client        *daemonClient
 	probeInterval time.Duration
 	probeTimeout  time.Duration
+	// authToken, when non-empty, gates every broker endpoint except GET
+	// /v0/healthz and the dashboard static assets behind a shared bearer
+	// token (Authorization: Bearer <token> or ?token=).
+	authToken string
 
 	mu      sync.Mutex
 	leases  map[string]*leaseEntry // lease ID -> routing entry
+	runs    map[string]*runEntry   // run ID -> routing entry (federated runs)
 	orphans map[string]*host       // speculative leases whose release failed
 	rr      int                    // round-robin tiebreak counter
 
@@ -57,6 +63,14 @@ type Options struct {
 	// DemandWindow is how far back placement decisions count toward
 	// warm-pool rebalancing hints; zero takes DefaultDemandWindow.
 	DemandWindow time.Duration
+	// AuthToken, when non-empty, requires the shared bearer token on
+	// every broker endpoint except GET /v0/healthz and the dashboard
+	// static assets.
+	AuthToken string
+	// DaemonToken is the default bearer token sent to fronted daemons
+	// that run with --auth-token; a per-host token in the config file
+	// overrides it.
+	DaemonToken string
 }
 
 // New creates a Broker over the configured hosts. Call Run to start the
@@ -82,11 +96,16 @@ func New(cfg Config, log *slog.Logger, opts Options) *Broker {
 		client:        &daemonClient{http: opts.HTTPClient},
 		probeInterval: opts.ProbeInterval,
 		probeTimeout:  opts.ProbeTimeout,
+		authToken:     opts.AuthToken,
 		leases:        map[string]*leaseEntry{},
+		runs:          map[string]*runEntry{},
 		orphans:       map[string]*host{},
 		demandWindow:  opts.DemandWindow,
 	}
 	for _, hc := range cfg.Hosts {
+		if hc.Token == "" {
+			hc.Token = opts.DaemonToken
+		}
 		b.hosts = append(b.hosts, &host{cfg: hc})
 	}
 	return b
@@ -110,22 +129,31 @@ func (b *Broker) Run(ctx context.Context) {
 func (b *Broker) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v0/healthz", b.handleHealthz)
+	// Read-only aggregated fleet dashboard (embedded static assets).
+	// /dash redirects to /dash/ so relative asset URLs resolve.
+	dash := dashHandler()
+	mux.Handle("GET /dash/", dash)
+	mux.Handle("GET /dash", http.RedirectHandler("/dash/", http.StatusMovedPermanently))
 	mux.HandleFunc("GET /v0/targets", b.handleListTargets)
 	mux.HandleFunc("POST /v0/leases", b.handleAcquireLease)
 	mux.HandleFunc("GET /v0/leases", b.handleListLeases)
 	mux.HandleFunc("GET /v0/leases/{id}", b.handleGetLease)
 	mux.HandleFunc("POST /v0/leases/{id}/renew", b.handleRenewLease)
 	mux.HandleFunc("DELETE /v0/leases/{id}", b.handleReleaseLease)
+	mux.HandleFunc("POST /v0/runs", b.handleRunCreate)
+	mux.HandleFunc("GET /v0/runs", b.handleRunList)
+	mux.HandleFunc("GET /v0/runs/{id}", b.handleRunGet)
 	mux.HandleFunc("GET /v0/fleet/hosts", b.handleFleetHosts)
 	mux.HandleFunc("GET /v0/fleet/placements", b.handleFleetPlacements)
 	mux.HandleFunc("GET /v0/fleet/hints", b.handleFleetHints)
-	return jsonErrorEnvelope(mux)
+	return authMiddleware(b.authToken, jsonErrorEnvelope(mux))
 }
 
 func (b *Broker) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"version": proto.Version,
+		"build":   buildinfo.Version,
 		"role":    "broker",
 		"hosts":   len(b.hosts),
 	})

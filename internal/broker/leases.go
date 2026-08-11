@@ -87,7 +87,7 @@ func (b *Broker) handleAcquireLease(w http.ResponseWriter, r *http.Request) {
 		hreq := req
 		hreq.Labels = stripHostLabels(req.Labels, h)
 		var l proto.Lease
-		err := b.client.postJSON(acquireCtx, h.cfg.Addr+"/v0/leases", hreq, &l)
+		err := b.client.postJSON(acquireCtx, h.cfg.Token, h.cfg.Addr+"/v0/leases", hreq, &l)
 		if err != nil {
 			var de *daemonError
 			if errors.As(err, &de) {
@@ -207,7 +207,7 @@ func (b *Broker) handleListLeases(w http.ResponseWriter, r *http.Request) {
 			var resp struct {
 				Leases []proto.Lease `json:"leases"`
 			}
-			if err := b.client.getJSON(fctx, h.cfg.Addr+"/v0/leases", &resp); err != nil {
+			if err := b.client.getJSON(fctx, h.cfg.Token, h.cfg.Addr+"/v0/leases", &resp); err != nil {
 				b.log.Warn("leases fetch failed, skipping host", "host", h.cfg.Name, "err", err)
 				return
 			}
@@ -236,7 +236,7 @@ func (b *Broker) handleListLeases(w http.ResponseWriter, r *http.Request) {
 func (b *Broker) handleGetLease(w http.ResponseWriter, r *http.Request) {
 	b.proxyLeaseOp(w, r, func(ctx context.Context, h *host, id string) (proto.Lease, error) {
 		var l proto.Lease
-		err := b.client.getJSON(ctx, h.cfg.Addr+"/v0/leases/"+id, &l)
+		err := b.client.getJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id, &l)
 		return l, err
 	})
 }
@@ -248,7 +248,7 @@ func (b *Broker) handleRenewLease(w http.ResponseWriter, r *http.Request) {
 	}
 	b.proxyLeaseOp(w, r, func(ctx context.Context, h *host, id string) (proto.Lease, error) {
 		var l proto.Lease
-		err := b.client.postJSON(ctx, h.cfg.Addr+"/v0/leases/"+id+"/renew", req, &l)
+		err := b.client.postJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id+"/renew", req, &l)
 		return l, err
 	})
 }
@@ -259,7 +259,7 @@ func (b *Broker) handleReleaseLease(w http.ResponseWriter, r *http.Request) {
 		// must not leave the lease holding its target until TTL expiry.
 		ctx = context.WithoutCancel(ctx)
 		var l proto.Lease
-		err := b.client.deleteJSON(ctx, h.cfg.Addr+"/v0/leases/"+id, &l)
+		err := b.client.deleteJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id, &l)
 		return l, err
 	})
 }
@@ -388,7 +388,7 @@ func (b *Broker) annotate(l *proto.Lease, h *host) {
 func (b *Broker) releaseSpeculative(ctx context.Context, h *host, id string, reset bool) *proto.Lease {
 	if reset {
 		var cur proto.Lease
-		err := b.client.getJSON(context.WithoutCancel(ctx), h.cfg.Addr+"/v0/leases/"+id, &cur)
+		err := b.client.getJSON(context.WithoutCancel(ctx), h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id, &cur)
 		if err == nil && cur.State == proto.LeaseActive {
 			b.annotate(&cur, h)
 			return &cur
@@ -407,7 +407,7 @@ func (b *Broker) releaseQuietly(ctx context.Context, h *host, id string) {
 	// Detach from the client's request: a cancelled/disconnected client
 	// must not leave a speculative queued lease blocking the daemon's FIFO.
 	ctx = context.WithoutCancel(ctx)
-	err := b.client.deleteJSON(ctx, h.cfg.Addr+"/v0/leases/"+id, nil)
+	err := b.client.deleteJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id, nil)
 	if err == nil {
 		return
 	}

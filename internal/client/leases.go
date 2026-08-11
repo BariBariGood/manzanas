@@ -14,28 +14,34 @@ import (
 func (c *Client) AcquireLease(ctx context.Context, req proto.AcquireLeaseRequest) (proto.Lease, error) {
 	var l proto.Lease
 	err := c.do(ctx, http.MethodPost, "/v0/leases", req, &l)
+	if err == nil {
+		c.noteLease(l)
+	}
 	return l, err
 }
 
-// GetLease calls GET /v0/leases/{id}.
+// GetLease calls GET /v0/leases/{id}: through a broker when there is one,
+// falling back to the owning daemon if the broker is down.
 func (c *Client) GetLease(ctx context.Context, id string) (proto.Lease, error) {
 	var l proto.Lease
-	err := c.do(ctx, http.MethodGet, "/v0/leases/"+url.PathEscape(id), nil, &l)
+	err := c.leaseControlDo(ctx, id, http.MethodGet, "/v0/leases/"+url.PathEscape(id), nil, &l)
 	return l, err
 }
 
-// RenewLease calls POST /v0/leases/{id}/renew.
+// RenewLease calls POST /v0/leases/{id}/renew: through a broker when
+// there is one, falling back to the owning daemon if the broker is down.
 func (c *Client) RenewLease(ctx context.Context, id string, ttlSeconds int) (proto.Lease, error) {
 	var l proto.Lease
-	err := c.do(ctx, http.MethodPost, "/v0/leases/"+url.PathEscape(id)+"/renew",
+	err := c.leaseControlDo(ctx, id, http.MethodPost, "/v0/leases/"+url.PathEscape(id)+"/renew",
 		proto.RenewLeaseRequest{TTLSeconds: ttlSeconds}, &l)
 	return l, err
 }
 
-// ReleaseLease calls DELETE /v0/leases/{id}.
+// ReleaseLease calls DELETE /v0/leases/{id}: through a broker when there
+// is one, falling back to the owning daemon if the broker is down.
 func (c *Client) ReleaseLease(ctx context.Context, id string) (proto.Lease, error) {
 	var l proto.Lease
-	err := c.do(ctx, http.MethodDelete, "/v0/leases/"+url.PathEscape(id), nil, &l)
+	err := c.leaseControlDo(ctx, id, http.MethodDelete, "/v0/leases/"+url.PathEscape(id), nil, &l)
 	return l, err
 }
 
@@ -45,6 +51,9 @@ func (c *Client) ListLeases(ctx context.Context) ([]proto.Lease, error) {
 		Leases []proto.Lease `json:"leases"`
 	}
 	err := c.do(ctx, http.MethodGet, "/v0/leases", nil, &out)
+	for _, l := range out.Leases {
+		c.noteLease(l)
+	}
 	return out.Leases, err
 }
 

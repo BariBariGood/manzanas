@@ -29,7 +29,10 @@ expressible in every MCP client config:
 
 If neither is set, it defaults to `127.0.0.1:7433`. To lease across a
 multi-Mac fleet, point at a `manzanas-broker` endpoint instead
-([broker.md](broker.md)).
+([broker.md](broker.md)) — the server follows the `host_addr` annotation
+on broker-granted leases automatically, so every tool (actions, boot,
+screenshots, state, journal) works against the owning daemon with no
+extra configuration.
 
 `manzanas mcp` health-checks the daemon at startup and exits with an
 actionable error if it is unreachable, so a misconfigured address
@@ -109,6 +112,8 @@ Fleet and lifecycle:
 | `lease_release` | Release a lease when done. |
 | `app` | Install / launch / terminate an app on the leased target. |
 | `state` | Snapshot / restore / fixture deterministic simulator state. |
+| `run` | Execute a whole run in one call from a declarative YAML run-spec: lease → boot → fixtures → app → steps → evidence → release ([runs.md](runs.md)). |
+| `run_status` | Poll a run started with `run` (async or still executing) by its run ID. |
 | `journal_export` | Export a run's journal as PR-ready evidence (`run_id` = `lease_id`): markdown summary with failures highlighted and artifact refs, or the raw JSON export with `format: "json"`. Works after the lease is released. |
 
 Semantic element tools (preferred — the daemon matches accessibility

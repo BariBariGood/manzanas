@@ -68,7 +68,7 @@ func (b *Broker) fetchTargets(ctx context.Context, h *host) ([]proto.Target, err
 	var resp struct {
 		Targets []proto.Target `json:"targets"`
 	}
-	if err := b.client.getJSON(ctx, h.cfg.Addr+"/v0/targets", &resp); err != nil {
+	if err := b.client.getJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/targets", &resp); err != nil {
 		return nil, err
 	}
 	for i := range resp.Targets {

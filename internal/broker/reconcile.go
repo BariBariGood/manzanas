@@ -31,7 +31,7 @@ func (b *Broker) reconcileLeases(ctx context.Context, h *host) {
 	for _, id := range b.reconcilableLeases(h) {
 		var l proto.Lease
 		err := b.withTimeout(ctx, func(ctx context.Context) error {
-			return b.client.getJSON(ctx, h.cfg.Addr+"/v0/leases/"+id, &l)
+			return b.client.getJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id, &l)
 		})
 		if err != nil {
 			var de *daemonError
@@ -96,7 +96,7 @@ func (b *Broker) releaseOrphans(ctx context.Context, h *host) {
 	b.mu.Unlock()
 	for _, id := range ids {
 		err := b.withTimeout(ctx, func(ctx context.Context) error {
-			return b.client.deleteJSON(ctx, h.cfg.Addr+"/v0/leases/"+id, nil)
+			return b.client.deleteJSON(ctx, h.cfg.Token, h.cfg.Addr+"/v0/leases/"+id, nil)
 		})
 		var de *daemonError
 		if err == nil || (errors.As(err, &de) && de.Status < http.StatusInternalServerError) {

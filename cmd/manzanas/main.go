@@ -12,15 +12,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	"github.com/BariBariGood/manzanas/internal/client"
 )
 
-// version is stamped at build time via -ldflags "-X main.version=...".
-var version = "dev"
-
 const usage = `manzanas — thin client for manzanasd (iOS simulator fleet daemon)
 
-Usage: manzanas [--daemon ADDR] [--json] <command> [args]
+Usage: manzanas [--daemon ADDR] [--token TOKEN] [--json] <command> [args]
 
 Commands:
   targets                              list targets
@@ -35,6 +33,7 @@ Commands:
   screenshot -o FILE.png               capture the screen (-o - for stdout)
   audit                                deterministic UI checks: findings + annotated screenshot
   record start|stop                    screen recording (requires --lease)
+  run SPEC.yaml                        one-call run: lease → boot → app → steps → evidence → release
   app install|launch|terminate         app lifecycle
   state snapshot|restore|fixture       deterministic state control
   stream url                           print a live view URL
@@ -47,6 +46,8 @@ Commands:
 
 Global flags:
   --daemon ADDR   daemon address (default $MANZANASD_ADDR or 127.0.0.1:7433)
+  --token TOKEN   bearer token for daemons/brokers running with --auth-token
+                  (default $MANZANAS_TOKEN or $MANZANASD_AUTH_TOKEN)
   --json          machine-readable JSON output
 `
 
@@ -72,6 +73,7 @@ var commands = map[string]command{
 
 	"screenshot": cmdScreenshot,
 	"audit":      cmdAudit,
+	"run":        cmdRun,
 	"app":        cmdApp,
 	"state":      cmdState,
 	"record":     cmdRecord,
@@ -84,6 +86,7 @@ var commands = map[string]command{
 // appEnv carries the resolved global flags and IO for a command run.
 type appEnv struct {
 	client *client.Client
+	token  string
 	json   bool
 	stdout io.Writer
 	stderr io.Writer
@@ -103,6 +106,10 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	addr := os.Getenv("MANZANASD_ADDR")
+	token := os.Getenv("MANZANAS_TOKEN")
+	if token == "" {
+		token = os.Getenv("MANZANASD_AUTH_TOKEN")
+	}
 	jsonOut := false
 	// Peel global flags off the front so subcommands own the rest.
 	for len(args) > 0 {
@@ -116,11 +123,17 @@ func run(ctx context.Context, args []string) error {
 		case len(args[0]) > 9 && args[0][:9] == "--daemon=":
 			addr = args[0][9:]
 			args = args[1:]
+		case args[0] == "--token" && len(args) > 1:
+			token = args[1]
+			args = args[2:]
+		case len(args[0]) > 8 && args[0][:8] == "--token=":
+			token = args[0][8:]
+			args = args[1:]
 		case args[0] == "-h" || args[0] == "--help" || args[0] == "help":
 			fmt.Print(usage)
 			return nil
 		case args[0] == "--version" || args[0] == "version":
-			fmt.Printf("manzanas %s\n", version)
+			fmt.Printf("manzanas %s\n", buildinfo.Version)
 			return nil
 		default:
 			goto dispatch
@@ -135,6 +148,8 @@ dispatch:
 	if !ok {
 		return fmt.Errorf("unknown command %q (see manzanas --help)", args[0])
 	}
-	app := &appEnv{client: client.New(addr), json: jsonOut, stdout: os.Stdout, stderr: os.Stderr}
+	c := client.New(addr)
+	c.SetToken(token)
+	app := &appEnv{client: c, token: token, json: jsonOut, stdout: os.Stdout, stderr: os.Stderr}
 	return cmd(ctx, app, args[1:])
 }

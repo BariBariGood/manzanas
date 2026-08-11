@@ -58,7 +58,7 @@ manzanas app launch com.example.myapp
 - `boot` is asynchronous — poll `manzanas targets` (or `--json` and check
   `state`) until `Booted`. Pool sims thaw in ~0–3 s; cold boots on Intel
   can take minutes and are subject to the daemon's load/disk/cap gates
-  (refusals come back as `429 capacity`).
+  (refusals come back as `503 {"code":"overloaded"}` with a `Retry-After` header / `retry_after_seconds` — back off and retry).
 - The `.app` path is a path **on the daemon's Mac**, not on your client.
   For Expo/RN debug builds, Metro must be reachable from the sim
   (typically `localhost:8081` on the same Mac) or the app boots to the

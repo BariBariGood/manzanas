@@ -15,7 +15,8 @@ import (
 // solid color that cycles per capture, so viewers (and tests) can observe
 // frame progression without any simulator.
 type FakeSource struct {
-	udid string
+	udid  string
+	frame func() ([]byte, error) // nil: color-cycling frames
 
 	mu     sync.Mutex
 	n      int
@@ -25,6 +26,14 @@ type FakeSource struct {
 // NewFakeSource returns a FakeSource labeled with the target udid.
 func NewFakeSource(udid string) *FakeSource {
 	return &FakeSource{udid: udid}
+}
+
+// NewFakeSourceFrames returns a FakeSource whose frames come from the
+// given renderer instead of the color cycle — the --mock daemon uses it
+// to stream the mock action backend's synthetic UI, so /view and /dash
+// show the same screen the actions drive.
+func NewFakeSourceFrames(udid string, frame func() ([]byte, error)) *FakeSource {
+	return &FakeSource{udid: udid, frame: frame}
 }
 
 // FakeSourceFactory is a SourceFactory producing FakeSources.
@@ -42,6 +51,9 @@ func (f *FakeSource) Next(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("fake source for %s is closed", f.udid)
 	}
 	f.n++
+	if f.frame != nil {
+		return f.frame()
+	}
 	return encodeFakeFrame(f.n)
 }
 
