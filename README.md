@@ -14,13 +14,6 @@ AI agents (and humans) sharing simulators.
 https://github.com/user-attachments/assets/deb577d0-1123-4a89-90d8-8d9c7684a3cf
 
 
-
-https://github.com/user-attachments/assets/983b0548-df1a-41a3-812c-f0f39cfaa01c
-
-
-
-
-
 *The launch film — leases, actions, live streaming, warm pools, the broker,
 and the run journal in 52 seconds. Sound on.*
 
@@ -32,11 +25,10 @@ protocol over HTTP + WebSocket. `manzanas-broker` federates N daemons
 behind one endpoint — start with one Mac, and when you outgrow it the same
 clients lease across the whole fleet without changing a line.
 
-![manzanas CLI demo: two agents lease warm-pool simulators, drive one, and export journal evidence](docs/assets/demo.webp)
+https://github.com/user-attachments/assets/983b0548-df1a-41a3-812c-f0f39cfaa01c
 
-*Two agents lease pre-warmed simulators — parked sims thaw on grant instead
-of paying a 5 s+ boot — then drive one (warm taps land in ~50 ms end-to-end)
-and export the run journal as PR-ready evidence.*
+*1 orchestrator, 7 Codex agents, 7 simulators across 3 Macs — leases mean
+nobody trips over anybody. Real time, no edits.*
 
 **Website: [manzanasgo.vercel.app](https://manzanasgo.vercel.app)** (source in
 [`site/`](site/)).
