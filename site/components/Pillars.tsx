@@ -131,6 +131,57 @@ export default function Pillars() {
               </div>
             </div>
           </Reveal>
+          {/* Fleet dashboard */}
+          <Reveal className="lg:col-span-2">
+            <div className="tile tile-hover flex h-full flex-col justify-between p-8 sm:p-10">
+              <div className="max-w-[440px]">
+                <h3 className="headline text-[28px]">Fleet dashboard</h3>
+                <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
+                  Every daemon serves its own dashboard at{" "}
+                  <code className="font-mono text-[14px]">/dash</code>; the
+                  broker serves one aggregating the whole fleet — targets,
+                  leases, live multiview, and the journal browser. Embedded in
+                  the binary, nothing to install.
+                </p>
+              </div>
+              <div className="mt-8 space-y-2 font-mono text-[11.5px] sm:text-[12.5px]">
+                {(
+                  [
+                    ["emac · 4 targets", "3 booted · 1 parked", "#c22214"],
+                    ["work · 3 targets", "2 booted · 1 leased", "#c22214"],
+                    ["studio · 5 targets", "warm pool · 4 parked", "#b25000"],
+                  ] as const
+                ).map(([host, status, color]) => (
+                  <div
+                    key={host}
+                    className="flex items-center justify-between gap-3 rounded-xl bg-[#f5f5f7] px-3.5 py-3 sm:px-4"
+                  >
+                    <span className="truncate text-[#1d1d1f]">{host}</span>
+                    <span className="whitespace-nowrap" style={{ color }}>
+                      {status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+
+          {/* Broker-transparent clients */}
+          <Reveal delay={0.06}>
+            <div className="tile tile-hover flex h-full flex-col p-8 sm:p-10">
+              <h3 className="headline text-[28px]">One endpoint, N Macs</h3>
+              <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
+                Point the CLI or MCP server at a broker and every lease-scoped
+                call follows the lease to its owning daemon automatically. No
+                extra configuration; media never flows through the broker.
+              </p>
+              <div className="mt-auto rounded-xl bg-[#f5f5f7] p-4 pt-3 font-mono text-[11px] leading-relaxed text-[#6e6e73]">
+                <p className="text-[#424245]">→ lease acquire (broker :7440)</p>
+                <p className="mt-1 text-[#c22214]">← lse_9f2 · host_addr emac:7433</p>
+                <p className="mt-1">→ tap 187 412 (emac :7433, direct)</p>
+              </div>
+            </div>
+          </Reveal>
         </div>
 
         <Reveal delay={0.1}>
@@ -139,7 +190,10 @@ export default function Pillars() {
               Sims and devices. One API.
             </p>
             <p className="copy-secondary mt-2 text-[16px] leading-relaxed">
-              Simulators and physical iPhones (devicectl + WebDriverAgent) — same API.
+              Simulators and physical iPhones (devicectl + WebDriverAgent) —
+              same API. Every binary reports its build version, and an
+              optional shared bearer token (<code className="font-mono text-[13px]">--auth-token</code>)
+              gates the whole surface.
             </p>
           </div>
         </Reveal>

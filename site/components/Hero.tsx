@@ -8,7 +8,8 @@ import {
   useTransform,
 } from "framer-motion";
 
-const INSTALL_CMD = "git clone https://github.com/BariBariGood/manzanas && cd manzanas && make build";
+const INSTALL_CMD =
+  "brew tap baribarigood/tap https://github.com/BariBariGood/homebrew-tap && brew trust baribarigood/tap && brew install manzanasd";
 const FILM_URL =
   "https://github.com/user-attachments/assets/deb577d0-1123-4a89-90d8-8d9c7684a3cf";
 
@@ -38,6 +39,15 @@ export default function Hero() {
           manzanas
         </motion.p>
 
+        <motion.div {...up(0.03)} className="mt-3 flex justify-center">
+          <a
+            href="/blog/v0-5-0-one-call-runs"
+            className="rounded-full border border-[#c22214]/20 bg-[#c22214]/[0.06] px-3.5 py-1 font-mono text-[12px] font-semibold text-[#c22214] transition-colors hover:bg-[#c22214]/[0.12]"
+          >
+            v0.5.0 — one-call runs · YAML specs · mock mode →
+          </a>
+        </motion.div>
+
         <motion.h1
           {...up(0.06)}
           className="headline headline-xl mt-3 text-[40px] sm:text-[64px] lg:text-[72px]"
@@ -51,7 +61,8 @@ export default function Hero() {
           className="copy-secondary mx-auto mt-6 max-w-[560px] text-[18px] leading-relaxed sm:text-[20px]"
         >
           One daemon per Mac. Your AI agents share its simulators
-          without stepping on each other.
+          without stepping on each other — and one call runs the whole
+          loop, from clean simulator to evidence.
         </motion.p>
 
         <motion.div
@@ -105,7 +116,7 @@ function InstallChip() {
       className="group flex max-w-full items-center gap-3 rounded-full border border-black/10 bg-black/[0.04] px-4 py-2 backdrop-blur transition-colors hover:border-black/20 hover:bg-black/[0.07]"
     >
       <code className="truncate font-mono text-[12px] text-[#424245]">
-        git clone …/manzanas && make build
+        brew tap baribarigood/tap … && brew install manzanasd
       </code>
       <span className="shrink-0 rounded-full bg-black/[0.07] px-2 py-0.5 text-[10px] font-medium text-[#1d1d1f]">
         {copied ? "Copied" : "Copy"}

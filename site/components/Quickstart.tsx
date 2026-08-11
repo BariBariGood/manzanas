@@ -5,12 +5,13 @@ const steps = [
   {
     n: "01",
     title: "Build and run the daemon",
-    body: "One command builds everything. Run it on a Mac — or anywhere with a mock fleet.",
-    label: "build & run",
-    code: `make build   # builds bin/manzanasd and bin/manzanas
-
-# on a Mac with Xcode:
-./bin/manzanasd --addr :7433
+    body: "Install from the tap (or make build) and run it on a Mac — or anywhere with a mock fleet.",
+    label: "install & run",
+    code: `brew tap baribarigood/tap \\
+  https://github.com/BariBariGood/homebrew-tap
+brew trust baribarigood/tap
+brew install manzanasd
+brew services start manzanasd   # port 7433
 
 # anywhere (Linux/dev/CI), with a mock fleet:
 ./bin/manzanasd --addr :7433 --mock`,
@@ -31,9 +32,12 @@ export MANZANAS_LEASE=lse_9f2
   {
     n: "03",
     title: "Watch live, keep the evidence",
-    body: "Watch any simulator in your browser, follow the journal, or serve the fleet as MCP tools.",
-    label: "stream · journal · mcp",
-    code: `./bin/manzanas stream url --lease $MANZANAS_LEASE
+    body: "Or declare the whole run in YAML. Watch live, follow the journal, or serve the fleet as MCP tools.",
+    label: "run · journal · mcp",
+    code: `# or skip steps 2–3: one call, whole run
+./bin/manzanas run spec.yaml -o evidence.md
+
+./bin/manzanas stream url --lease $MANZANAS_LEASE
 ./bin/manzanas journal tail $MANZANAS_LEASE
 
 # serve MCP tools over stdio:

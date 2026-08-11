@@ -8,6 +8,27 @@ const posts: {
   fieldNote?: boolean;
 }[] = [
   {
+    slug: "v0-5-0-one-call-runs",
+    date: "August 11, 2026",
+    title: "v0.5.0: one call from clean simulator to evidence",
+    teaser:
+      "POST /v0/runs takes a declarative YAML run-spec and executes the whole agent loop — lease, boot, install, launch, steps, artifacts, release — with the lease always released and a PR-ready evidence export attached, even on failure.",
+  },
+  {
+    slug: "testing-ios-without-a-mac",
+    date: "August 11, 2026",
+    title: "Testing iOS apps without a Mac fleet: mock mode",
+    teaser:
+      "manzanasd --mock runs the daemon on any Linux box with a full deterministic action backend — the real observe/tap/audit handlers against a synthetic app screen. A tutorial from raw HTTP to a one-call run with evidence.",
+  },
+  {
+    slug: "why-agents-need-simulator-leases",
+    date: "August 11, 2026",
+    title: "Why agents need simulator leases",
+    teaser:
+      "Two agents on one Mac will boot each other's simulators and type into the wrong window. Why locks fail, why leases (TTL + FIFO queues) work, and how ~0.28 s warm-pool thaws make short leases actually viable.",
+  },
+  {
     slug: "field-notes-aug-3",
     date: "August 3, 2026",
     title: "Field notes: real devices, a smarter broker, video",
