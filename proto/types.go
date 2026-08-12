@@ -523,6 +523,38 @@ type Error struct {
 	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
 }
 
+// DeviceWDAConfig is one device's WebDriverAgent wiring: the HTTP
+// endpoint the daemon speaks WDA to, an optional auto-launch spec
+// (devicectl:<bundle-id> or xctestrun:<path>), and an optional supervised
+// usbmux port forward ("<local>:<remote>", e.g. "8100:8100").
+// Additive (v0).
+type DeviceWDAConfig struct {
+	URL     string `json:"url,omitempty"`
+	Launch  string `json:"launch,omitempty"`
+	Forward string `json:"forward,omitempty"`
+}
+
+// DeviceMirrorConfig is one mirror-backed device's wiring: the unix
+// socket of the mirrord GUI helper that drives macOS iPhone Mirroring
+// (empty = the daemon's default, ~/.manzanasd/mirrord.sock). The mirror
+// is exclusive global state (one phone per Mac), so a config holds at
+// most one mirror-backed device. Additive (v0).
+type DeviceMirrorConfig struct {
+	Socket string `json:"socket,omitempty"`
+}
+
+// DevicesConfig is the runtime device configuration: whether physical
+// devices are enumerated as targets, and per-UDID action-backend wiring
+// (WDA or iPhone Mirroring; a device is one or the other, never both).
+// It is the body of POST /v0/devices, the response of GET /v0/devices,
+// and the shape of the daemon's devices config file (see
+// docs/devices.md). Additive (v0).
+type DevicesConfig struct {
+	Enabled bool                          `json:"enabled"`
+	WDA     map[string]DeviceWDAConfig    `json:"wda,omitempty"`
+	Mirror  map[string]DeviceMirrorConfig `json:"mirror,omitempty"`
+}
+
 // Well-known error codes.
 const (
 	ErrNotFound        = "not_found"

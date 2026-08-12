@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- User LaunchAgent template for mirrord. install.sh substitutes the
+     __MIRRORD__ placeholder with the installed binary path. A LaunchAgent
+     (not a LaunchDaemon, not an SSH-spawned process) is required: it runs
+     inside the logged-in user's GUI session, which is the TCC subject the
+     Accessibility + Screen Recording grants attach to and the only
+     context CGEvents and screencapture work from. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.baribarigood.manzanasd.mirrord</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__MIRRORD__</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>StandardErrorPath</key>
+    <string>__LOGDIR__/mirrord.err.log</string>
+    <key>StandardOutPath</key>
+    <string>__LOGDIR__/mirrord.out.log</string>
+</dict>
+</plist>

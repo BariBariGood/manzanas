@@ -132,24 +132,326 @@ session — so `xctestrun:` is the reliable non-interactive form, and
 Appium's WDA forks with `USE_PORT` baked in). Try `devicectl:` first; if
 `/status` never comes up, use `xctestrun:`.
 
-### One-time manual setup (signing)
+## Supervised usbmux forward (--device-wda-forward)
 
-WDA is an XCUITest bundle and must be signed for the device's team; this
-cannot be done headlessly the first time. One-time, per host + device:
+WDA listens on the device; the host reaches it through a usbmux port
+forward. A dead forward is indistinguishable from a dead runner from the
+client's side, so the daemon supervises it the same way:
 
-1. Clone [WebDriverAgent](https://github.com/appium/WebDriverAgent) and
-   open `WebDriverAgent.xcodeproj` in Xcode; set your development team on
-   the `WebDriverAgentRunner` target (automatic signing).
-2. `xcodebuild build-for-testing -project WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner -destination id=<udid> -allowProvisioningUpdates`
-   — this produces `WebDriverAgentRunner_*.xctestrun` in the derived-data
-   `Build/Products` directory and installs the runner on the phone.
-3. On first launch, trust the developer profile on the phone
-   (Settings → General → VPN & Device Management).
-4. WDA listens on the device's port 8100; forward it to the host
-   (`pymobiledevice3 usbmux forward 8100 8100`, `iproxy 8100 8100`, or a
-   Wi-Fi-reachable device IP) and use that as the `--device-wda` URL.
+```sh
+manzanasd --devices \
+  --device-wda 00008130-XXXX=http://127.0.0.1:8100 \
+  --device-wda-launch 00008130-XXXX=xctestrun:/path/to/WebDriverAgentRunner.xctestrun \
+  --device-wda-forward 00008130-XXXX=8100:8100
+# env: MANZANASD_DEVICE_WDA_FORWARD
+```
 
-After that, `--device-wda-launch` keeps it running unattended.
+The forward supervisor runs `iproxy <local> <remote> -u <udid>`
+(libimobiledevice) — or `pymobiledevice3 usbmux forward` when iproxy is
+not installed — as a supervised child: its health probe is "something is
+listening on the local port", and it is relaunched with the same capped
+backoff as the runner. Both children are killed at daemon shutdown.
+
+## Device onboarding (`manzanas device onboard`)
+
+One command from a paired, trusted phone to a leasable `/v0/targets`
+entry with working HID:
+
+```sh
+manzanas device onboard 00008130-XXXX --apply
+```
+
+It locates a WebDriverAgent checkout (cached under `~/.manzanas/wda`,
+shallow-cloned from upstream if missing; override with `--wda-src`),
+builds it for the device with `xcodebuild build-for-testing` under a
+manzanas-owned bundle id (`--wda-bundle-id`, default `com.manzanas.wda`)
+and automatic signing, finds the produced device `.xctestrun`, and
+assembles the daemon config: WDA URL + supervised `xctestrun:` launch +
+supervised usbmux forward (`--forward`, default `8100:8100`).
+
+With `--apply` it merges that config over the daemon's current one via
+`POST /v0/devices` and waits for the phone to appear in `/v0/targets` —
+no daemon restart. `--apply` requires the daemon to run with
+`--auth-token` (the route spawns host processes, so an unauthenticated
+daemon refuses it with `403`); use `--config-out` + SIGHUP on a
+tokenless daemon. With `--config-out FILE` it merges into a devices
+config file instead (SIGHUP the daemon to pick it up). Without either it
+prints the equivalent flags and config JSON.
+
+Headless signing flags (see the next section for why each exists):
+`--team` (default `$APPLE_TEAM_ID`), `--keychain`, `--asc-key-path` /
+`--asc-key-id` / `--asc-issuer-id` (defaults `$ASC_API_KEY_PATH`,
+`$ASC_API_KEY_ID`, `$ASC_API_ISSUER_ID`). `--skip-build` reuses an
+existing `.xctestrun` from derived data and just regenerates/applies the
+config.
+
+On first install, trust the developer profile on the phone
+(Settings → General → VPN & Device Management) — the one step that
+cannot be automated.
+
+## Building and signing WDA for a real device, headless
+
+The fallback when `manzanas device onboard` cannot be used. WDA is an
+XCUITest bundle and must be signed for a team you control; a stock
+checkout built over SSH hits three walls, in this order:
+
+1. **The project's hardcoded team.** Upstream WDA ships someone else's
+   `DEVELOPMENT_TEAM` and `PRODUCT_BUNDLE_IDENTIFIER`, so a device build
+   fails immediately with `No Account for Team "..."` / `No profiles for
+   '....xctrunner' were found`. Override both on the command line —
+   never edit the project.
+2. **No provisioning profile for `*.xctrunner`.** Automatic provisioning
+   must create one; headlessly (no logged-in Xcode) that requires
+   `-allowProvisioningUpdates -allowProvisioningDeviceRegistration` plus
+   App Store Connect API credentials
+   (`-authenticationKeyPath/-authenticationKeyID/-authenticationKeyIssuerID`).
+3. **Headless codesign over SSH.** Even with a profile, `codesign` fails
+   with `errSecInternalComponent` unless the signing identity's private
+   key lives in an **unlocked** keychain whose key partition list
+   includes `apple-tool:` (i.e. codesign). Use a dedicated signing
+   keychain: import the certificate + key, add it to the search list,
+   then `security unlock-keychain -p <pw> <name>.keychain` and
+   `security set-key-partition-list -S apple-tool:,apple: -k <pw> <name>.keychain`
+   before building.
+
+The full working invocation:
+
+```sh
+security unlock-keychain -p <pw> dev-sign.keychain   # if using a dedicated keychain
+
+xcodebuild build-for-testing \
+  -project WebDriverAgent/WebDriverAgent.xcodeproj \
+  -scheme WebDriverAgentRunner \
+  -destination id=<udid> \
+  -derivedDataPath ~/.manzanas/wda-derived-<udid> \
+  -allowProvisioningUpdates \
+  -allowProvisioningDeviceRegistration \
+  -authenticationKeyPath ~/.asc_key.p8 \
+  -authenticationKeyID $ASC_API_KEY_ID \
+  -authenticationKeyIssuerID $ASC_API_ISSUER_ID \
+  PRODUCT_BUNDLE_IDENTIFIER=com.manzanas.wda \
+  CODE_SIGN_STYLE=Automatic \
+  DEVELOPMENT_TEAM=<team-id> \
+  'OTHER_CODE_SIGN_FLAGS=--keychain dev-sign.keychain'
+```
+
+This produces `WebDriverAgentRunner_iphoneos*.xctestrun` under the
+derived-data `Build/Products` directory and installs the runner on the
+phone; the runner bundle id becomes `com.manzanas.wda.xctrunner`. Trust
+the developer profile on the phone on first run. Then wire it up with
+`--device-wda` + `--device-wda-launch xctestrun:<path>` +
+`--device-wda-forward <local>:<remote>` (or the config file below), and
+the daemon keeps everything running unattended.
+
+## Runtime device config (config file, SIGHUP, POST /v0/devices)
+
+Device enumeration and WDA wiring are runtime-mutable: attaching a phone
+never requires killing the daemon. Three equivalent surfaces share one
+shape (`proto.DevicesConfig`):
+
+```json
+{
+  "enabled": true,
+  "wda": {
+    "00008130-XXXX": {
+      "url": "http://127.0.0.1:8100",
+      "launch": "xctestrun:/path/to/WebDriverAgentRunner.xctestrun",
+      "forward": "8100:8100"
+    }
+  }
+}
+```
+
+- **Config file** — `--devices-config /path/devices.json` (env
+  `MANZANASD_DEVICES_CONFIG`), or drop a `devices.json` into the state
+  dir (`~/.manzanasd/devices.json`) and it is picked up with no flags at
+  all. When present, the file replaces the `--devices`/`--device-wda*`
+  flag pile (the flags keep working for deployments that use them).
+- **SIGHUP** — `kill -HUP $(pgrep -f manzanasd)` re-reads the config
+  file and applies it live: supervisors for removed devices stop, changed
+  ones restart, added ones start. A file that fails to parse or validate
+  is rejected wholesale and the running config is kept.
+- **`POST /v0/devices`** — apply a full config over HTTP (`GET
+  /v0/devices` returns the current one). The body replaces the whole
+  config; merge client-side (as `manzanas device onboard --apply` does)
+  if you want add-a-device semantics. Runtime-only: the config file is
+  not rewritten, so a later SIGHUP restores the file's view.
+  Because the submitted config makes the daemon spawn host processes
+  (xcodebuild, iproxy), this route requires the daemon to be started
+  with `--auth-token` and returns `403` otherwise — the config file and
+  SIGHUP remain the tokenless path.
+
+```sh
+# attach a phone to a live daemon (daemon started with --auth-token):
+curl -X POST localhost:7433/v0/devices \
+  -H "Authorization: Bearer $MANZANASD_AUTH_TOKEN" -d '{
+  "enabled": true,
+  "wda": {"00008130-XXXX": {"url": "http://127.0.0.1:8100",
+           "launch": "xctestrun:/path/to/wda.xctestrun",
+           "forward": "8100:8100"}}
+}'
+# detach everything:
+curl -X POST localhost:7433/v0/devices \
+  -H "Authorization: Bearer $MANZANASD_AUTH_TOKEN" -d '{"enabled": false}'
+```
+
+## Running as a service (`manzanasd --install-service`)
+
+```sh
+manzanasd --install-service --devices-config ~/.manzanasd/devices.json --addr :7433
+```
+
+Writes (or refreshes) the per-user LaunchAgent
+`~/Library/LaunchAgents/com.baribarigood.manzanasd.plist` running the
+current binary with the current flags (minus `--install-service`
+itself, and with the installing shell's `MANZANASD_*`/`MANZANAS_*`
+environment snapshotted into the plist), then `launchctl bootstrap` +
+`kickstart`s it. Idempotent: re-run with new flags to update the
+service. Per-user domain only — no sudo, logs under
+`~/.manzanasd/logs/` (the same files `deploy/install.sh`'s daily
+rotation agent trims). A manually copied plist or
+a bare `manzanasd &` is **unsupervised**: nothing restarts it after a
+crash or reboot; use `--install-service` (or `deploy/install.sh`) for a
+supervised daemon.
+
+## The mirror backend (iPhone Mirroring + CGEvents)
+
+Some apps (TikTok and friends) kill WDA: requesting the XCUITest
+accessibility snapshot makes the runner crash, taking even coordinate
+taps down with it. The `mirror` backend drives the phone through macOS
+**iPhone Mirroring** instead — no XCTest on the phone at all. Input is
+synthesized CGEvents into the mirroring window, observation is
+`screencapture` of that window plus Vision-framework OCR.
+
+Select it per device (default remains `wda`):
+
+```sh
+manzanasd --devices \
+  --device-backend 00008130-XXXX=mirror \
+  --device-mirror-socket ~/.manzanasd/mirrord.sock   # default
+# env: MANZANASD_DEVICE_BACKEND, MANZANASD_DEVICE_MIRROR_SOCKET
+```
+
+Or select it in the devices config file (loaded at startup, re-read on
+SIGHUP, replaceable at runtime via `POST /v0/devices` — see "Runtime
+device config" above). Mirror-backed devices live under a
+top-level `mirror` key, siblings of `wda`:
+
+```json
+{
+  "enabled": true,
+  "mirror": {
+    "00008130-XXXX": { "socket": "/Users/you/.manzanasd/mirrord.sock" }
+  }
+}
+```
+
+`socket` may be omitted (default `~/.manzanasd/mirrord.sock`). A device
+is either WDA-backed or mirror-backed; listing a UDID under both
+`mirror` and `wda` (or giving a mirror device a
+`--device-wda`/`--device-wda-launch` entry) is a validation error. App
+lifecycle (`install_app`, `launch_app`, `terminate_app`) stays on
+devicectl for both backends.
+
+### What mirror actions look like
+
+| Capability | How | Notes |
+|---|---|---|
+| `tap`, `swipe` | CGEvent mouse events into the window | coordinates are capture-image pixels — the same space `screenshot`/`observe` report |
+| `type` | raw HID keycodes (US layout) | iPhone Mirroring forwards keycodes, not unicode: emoji/non-US glyphs return `bad_request` ("untypable"); `strategy: paste` and `require_focus` return `not_implemented` |
+| `button` | keyboard shortcuts | only `home` (Cmd+1). `lock`/volume have no mirroring equivalent → `not_implemented` |
+| `screenshot` | `screencapture -l <window>` | DRM-protected video renders **black** in the mirror — a black screenshot of a playing video is expected, not a bug |
+| `observe` | `screencapture` + Vision OCR | see fidelity below |
+| `pasteboard_get`/`set` | — | `not_implemented` (no reliable programmatic path through the mirror) |
+
+### Reduced observation fidelity — declared, not hidden
+
+`observe` on a mirror device returns OCR-derived **text boxes**, not an
+accessibility tree. Every mirror response carries `backend: "mirror"`,
+and observation/composite results add `fidelity: "ocr"` so callers can
+tell they are looking at OCR, not XCUITest:
+
+- nodes are flat `Text` elements — no roles, ids, values, placeholders
+  or hierarchy; element predicates effectively match on visible text
+  (`label`/`text`) only;
+- `tap_element`, `type_into_element`, `scroll_to_element`,
+  `wait_for_element`, `wait_tree_stable` work off those OCR boxes and
+  stamp `fidelity: "ocr"` on their results;
+- icon-only buttons are invisible to OCR — fall back to coordinate
+  `tap` from a `screenshot`;
+- `include_raw: true` returns the raw boxes with confidences
+  (`raw_format: "vision-ocr-boxes"`).
+
+### The mirror is exclusive global state
+
+iPhone Mirroring shows **one phone per Mac** and its window must be
+**frontmost** for input to land. Consequences, enforced and documented:
+
+- at most one device per daemon may be mirror-backed (startup error
+  otherwise), so the normal per-device lease already serializes all
+  mirror access — leasing the mirror-backed device *is* leasing the
+  mirror;
+- the helper serves requests strictly serially and the Go client
+  serializes calls, so concurrent actions cannot interleave gestures;
+- the helper re-activates the mirroring window before every input; if
+  another window steals focus mid-gesture, events can still be
+  swallowed — agents should avoid fighting a human for the same desktop;
+- unlocking the physical iPhone pauses mirroring ("iPhone in Use").
+  Actions then fail with an actionable `unavailable` error telling you
+  to lock the phone; reconnecting is a physical/GUI action the daemon
+  never attempts itself.
+
+### mirrord: the GUI helper (and the TCC story)
+
+CGEvents and `screencapture` require **Accessibility** and **Screen
+Recording** TCC grants, and TCC grants attach to the *process context*:
+a daemon started over SSH is a different TCC subject than a GUI app, so
+manzanasd cannot do this itself. The `mirrord` helper
+(`helpers/mirrord/`, Swift, system frameworks only) runs as a **user
+LaunchAgent inside the logged-in GUI session** and serves HTTP/JSON on a
+local unix socket (`0600`); manzanasd is a plain client.
+
+Install (on the Mac, as the logged-in user — never root):
+
+```sh
+cd helpers/mirrord
+./install.sh          # builds with swiftc, installs ~/bin/mirrord, loads the LaunchAgent
+~/bin/mirrord --doctor  # prints exactly which grant/state is missing
+```
+
+One-time manual grants (a human must click these; there is no headless
+path by design):
+
+1. **System Settings → Privacy & Security → Accessibility** → add
+   `~/bin/mirrord` (enables taps/keystrokes).
+2. **System Settings → Privacy & Security → Screen & System Audio
+   Recording** → add `~/bin/mirrord` (enables window capture).
+3. Open **iPhone Mirroring** and connect the phone (first time: approve
+   pairing on the phone; the phone must be locked for mirroring to run).
+
+`--doctor` reports each prerequisite (`granted`/`MISSING` with the exact
+Settings pane) and triggers the TCC prompts so the binary appears in the
+panes. Rebuilds keep grants because the binary path is stable
+(`~/bin/mirrord`).
+
+Uninstall cleanly:
+
+```sh
+helpers/mirrord/uninstall.sh   # unloads the LaunchAgent, removes binary + socket + logs
+# optionally remove the two TCC entries in System Settings
+```
+
+### Honest failure modes
+
+| Symptom | Error | Fix |
+|---|---|---|
+| iPhone Mirroring not running | `unavailable` (`not-running`) | open the app |
+| no phone window | `unavailable` (`no-window`) | connect the phone in the app |
+| "iPhone in Use" interstitial | `unavailable` (`blocked`) | lock the physical phone |
+| helper not running / socket missing | `unavailable` (mirrord helper unreachable) | `install.sh` / check `launchctl print gui/$UID/com.baribarigood.manzanasd.mirrord` |
+| capture fails | `unavailable` (`capture-failed`) | grant Screen Recording to mirrord |
+| emoji / non-US characters | `bad_request` (`untypable`) | ASCII only |
+| black video in screenshots | *no error* | DRM: expected mirror behavior |
 
 ## Reconnects mid-lease
 

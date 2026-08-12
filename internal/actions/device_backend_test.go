@@ -168,7 +168,7 @@ func TestKindRouterRoutesByTargetKind(t *testing.T) {
 	)
 	sim := &recordingBackend{}
 	dev := &recordingBackend{}
-	r := NewKindRouter(reg, sim, dev)
+	r := NewKindRouter(reg, sim, dev, nil)
 	ctx := context.Background()
 
 	if _, err := r.Dispatch(ctx, "SIM-1", proto.ActionRequest{Kind: "tap"}); err != nil {

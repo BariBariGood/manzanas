@@ -31,6 +31,10 @@ type Supervisor struct {
 	interval     time.Duration
 	readyTimeout time.Duration
 	kick         chan struct{}
+	// health overrides the default GET /status probe; used by forward
+	// supervisors, whose health is "the forwarder is listening locally",
+	// not "WDA answers" (that belongs to the runner supervisor).
+	health func(ctx context.Context) bool
 }
 
 // SupervisorOption configures a Supervisor.
@@ -44,6 +48,11 @@ func WithProbeInterval(d time.Duration) SupervisorOption {
 // WithReadyTimeout sets the per-launch readiness budget.
 func WithReadyTimeout(d time.Duration) SupervisorOption {
 	return func(s *Supervisor) { s.readyTimeout = d }
+}
+
+// WithHealthFunc replaces the GET /status probe with a custom check.
+func WithHealthFunc(fn func(ctx context.Context) bool) SupervisorOption {
+	return func(s *Supervisor) { s.health = fn }
 }
 
 // NewSupervisor builds a supervisor for one device's WDA endpoint.
@@ -102,6 +111,9 @@ func (s *Supervisor) Run(ctx context.Context) {
 func (s *Supervisor) healthy(ctx context.Context) bool {
 	pctx, cancel := context.WithTimeout(ctx, defaultProbeTimeout)
 	defer cancel()
+	if s.health != nil {
+		return s.health(pctx)
+	}
 	return s.client.Status(pctx) == nil
 }
 

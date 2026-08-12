@@ -41,6 +41,8 @@ Commands:
   journal upload RUN_ID FILE...        upload evidence artifacts to a run
   journal export RUN_ID                PR-ready evidence summary (--format md|json)
   fleet hosts|placements|hints         broker fleet views (--daemon BROKER)
+  device onboard UDID                  build+sign WDA and wire a physical phone into the daemon
+  device config                        show the daemon's runtime device config
   mcp                                  serve MCP tools over stdio
   version                              print the client version
 
@@ -79,6 +81,7 @@ var commands = map[string]command{
 	"record":     cmdRecord,
 	"stream":     cmdStream,
 	"journal":    cmdJournal,
+	"device":     cmdDevice,
 	"fleet":      cmdFleet,
 	"mcp":        cmdMCP,
 }

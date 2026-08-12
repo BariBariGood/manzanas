@@ -669,11 +669,13 @@ from simulators in these protocol-visible ways:
   simulator-only kinds (`key`, `key_sequence`, `audit`, and any other kind the
   simulator backend implements but WDA cannot express) are
   `501 {"code":"not_implemented"}`; unknown kinds stay
-  `400 bad_request`. HID/observation kinds require a WebDriverAgent
-  endpoint configured for the device (`--device-wda <udid>=<url>`),
+  `400 bad_request`. HID/observation kinds require an action backend for
+  the device: WebDriverAgent by default (`--device-wda <udid>=<url>`),
+  or the mirror backend (`--device-backend <udid>=mirror`, see below),
   otherwise `503 {"code":"unavailable"}`. Lifecycle kinds run through
-  `devicectl`; a paired-but-unreachable device is
-  `503 {"code":"unavailable"}` with a "device not connected" message.
+  `devicectl` regardless of the action backend; a paired-but-unreachable
+  device is `503 {"code":"unavailable"}` with a "device not connected"
+  message.
 
 | `kind` | payload | result |
 |---|---|---|
@@ -700,6 +702,81 @@ from simulators in these protocol-visible ways:
 > `include_raw`). This is the one non-additive device-result change in
 > v0, made before any external consumer of the device surface existed so
 > element predicates work identically across target kinds.
+
+#### 5.2.1 Runtime device configuration (`/v0/devices`)
+
+Device enumeration and WDA wiring are runtime-mutable (additive, v0):
+
+- `GET /v0/devices` → `200` with the daemon's current `DevicesConfig`:
+  `{"enabled": bool, "wda": {"<udid>": {"url"?, "launch"?, "forward"?}},
+  "mirror"?: {"<udid>": {"socket"?}}}`
+  (`url` the WDA endpoint, `launch` a `devicectl:<bundle-id>` or
+  `xctestrun:<path>` auto-launch spec, `forward` a supervised
+  `<local>:<remote>` usbmux port forward; `mirror` maps a device to the
+  mirror action backend — `socket` is the mirrord helper's unix socket,
+  default `~/.manzanasd/mirrord.sock`. At most one mirror-backed device
+  per config, and a UDID cannot appear in both `wda` and `mirror`).
+- `POST /v0/devices` with a `DevicesConfig` body **replaces** the whole
+  runtime config: enumeration toggles, supervisors for removed/changed
+  devices stop, added ones start — no daemon restart. Callers wanting
+  merge semantics GET first. Returns `200` with the resulting config.
+  Because the config's `launch`/`forward` specs make the daemon spawn
+  host processes, this route requires the daemon to run with a shared
+  bearer token (`--auth-token`) and returns `403 unauthorized` on a
+  tokenless daemon; the devices config file + SIGHUP is the tokenless
+  path. Unknown JSON fields are rejected (`400`) so a typoed key cannot
+  silently detach everything.
+  Validation failure is `400 {"code":"bad_request"}` and leaves the
+  running config untouched. The change is runtime-only: the daemon's
+  devices config file is not rewritten, and a later SIGHUP (which
+  re-reads the file) supersedes it.
+- Both routes return `501 {"code":"not_implemented"}` on daemons without
+  runtime device management (e.g. `--mock`).
+- With `"enabled": false` the config is remembered and echoed by GET,
+  but no devices are enumerated, no WDA is wired, and no supervisor
+  runs — equivalent to the legacy `--device-wda*` flags without
+  `--devices`.
+
+### 5.3 The mirror action backend
+
+A device selected with `--device-backend <udid>=mirror` (or a `mirror`
+entry in the devices config, §5.2.1) runs its
+HID/observation kinds through macOS iPhone Mirroring (see
+[docs/devices.md](../docs/devices.md)) instead of WDA. Lifecycle kinds
+(`install_app`/`launch_app`/`terminate_app`) are unchanged. Differences
+from the WDA table above (all additive within v0):
+
+- Every result carries `backend:"mirror"` instead of `backend:"wda"`.
+- `observe` and the composite element kinds (`tap_element`,
+  `type_into_element`, `scroll_to_element`, `wait_for_element`,
+  `wait_tree_stable`) additionally carry `fidelity:"ocr"` and declare
+  reduced fidelity: the `tree` is a flat list of OCR-derived `Text`
+  nodes (visible text + frame only — no roles, ids, values,
+  placeholders, or hierarchy), `observe` includes an explanatory `note`,
+  and `include_raw` returns the OCR boxes as `raw` with
+  `raw_format:"vision-ocr-boxes"`. Element predicates can therefore only
+  match on visible text. Coordinates (input and observed frames) are
+  capture-image pixels, not device points. `observe` and `screenshot`
+  results carry `img_w`/`img_h` — the pre-transform capture size, i.e.
+  the tap coordinate space — so callers of size-capped screenshots can
+  map back to tappable coordinates.
+- `tap`/`swipe`/`scroll` coordinates outside the current capture
+  (`img_w`×`img_h`) are `400 bad_request`: an unbounded synthetic click
+  would land on the host Mac's desktop, not the phone.
+- `swipe` additionally rejects `duration_seconds` above 10 with
+  `400 bad_request` (the mirror helper is a single serial resource).
+- `type` and `type_into_element` reject the `paste` strategy and
+  `require_focus` with `501 {"code":"not_implemented"}`; text is limited
+  to characters expressible as US-layout HID keycodes (others are
+  `400 bad_request`).
+- `button` supports only `home`; `lock`/`volume-up`/`volume-down` are
+  `501 {"code":"not_implemented"}` (physical-phone functions the mirror
+  cannot reach).
+- `pasteboard_get`/`pasteboard_set` are `501 {"code":"not_implemented"}`
+  (iPhone Mirroring exposes no pasteboard channel).
+- Mirroring interstitials (not running, no window, "iPhone in Use"
+  pause) surface as `503 {"code":"unavailable"}` with an actionable
+  message naming the physical step required.
 
 ## 6. Streams (owned by the stream slice)
 

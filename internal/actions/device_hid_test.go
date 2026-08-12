@@ -133,7 +133,7 @@ func (f *fakeWDAServer) start(t *testing.T) string {
 			writeValue(w, base64.StdEncoding.EncodeToString([]byte("png")))
 		}
 	})
-	mux.HandleFunc("GET /source", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /session/s1/source", func(w http.ResponseWriter, r *http.Request) {
 		if !gate(w) {
 			return
 		}

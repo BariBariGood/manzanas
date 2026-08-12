@@ -1,13 +1,16 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/BariBariGood/manzanas/internal/actions/mirror"
 	"github.com/BariBariGood/manzanas/internal/actions/wda"
 	"github.com/BariBariGood/manzanas/internal/imgutil"
 	"github.com/BariBariGood/manzanas/proto"
@@ -25,8 +28,16 @@ type DeviceBackend struct {
 	runner   Runner
 	xcrun    string
 	handlers map[string]deviceHandlerFunc
+	// mu guards wda and kick: both are runtime-mutable so a device can
+	// be attached to (or detached from) a running daemon (POST
+	// /v0/devices, SIGHUP config reload).
+	mu sync.RWMutex
 	// wda maps device UDID -> WDA client; nil entries mean unconfigured.
 	wda map[string]*wda.Client
+	// mirror maps device UDID -> mirrord helper client for mirror-backed
+	// devices (--device-backend <udid>=mirror). A device is either
+	// WDA-backed or mirror-backed, never both.
+	mirror map[string]*mirror.Client
 	// kick maps device UDID -> supervisor kick: called when a WDA action
 	// fails so the supervisor re-probes (and relaunches) immediately
 	// instead of waiting out its probe interval.
@@ -49,6 +60,18 @@ func WithDeviceWDA(urls map[string]string) DeviceOption {
 	}
 }
 
+// WithDeviceMirror registers mirror-backed devices, mapping device UDID
+// -> mirrord helper client. The mirror is exclusive global state (one
+// phone per Mac, window must be frontmost), so a daemon supports at most
+// one mirror-backed device; the flag parser enforces that.
+func WithDeviceMirror(clients map[string]*mirror.Client) DeviceOption {
+	return func(b *DeviceBackend) {
+		for udid, c := range clients {
+			b.mirror[udid] = c
+		}
+	}
+}
+
 // WithDeviceWDAKick registers per-device supervisor kicks, invoked when a
 // WDA-backed action fails so the supervisor restarts the runner promptly.
 func WithDeviceWDAKick(kicks map[string]func()) DeviceOption {
@@ -59,12 +82,47 @@ func WithDeviceWDAKick(kicks map[string]func()) DeviceOption {
 	}
 }
 
+// SetMirror points a device at a mirrord helper socket (empty removes
+// the mirror client, reverting the device to WDA-backed). Safe to call
+// on a serving backend: runtime device attach rewires the backend
+// without a restart. The config validator enforces at most one
+// mirror-backed device (the mirror is exclusive global state).
+func (b *DeviceBackend) SetMirror(udid, socket string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if socket == "" {
+		delete(b.mirror, udid)
+		return
+	}
+	b.mirror[udid] = mirror.New(socket)
+}
+
+// SetWDA points a device's WDA client at url (empty removes it), and
+// installs the matching supervisor kick (nil clears it). Safe to call on
+// a serving backend: runtime device attach rewires WDA without a restart.
+func (b *DeviceBackend) SetWDA(udid, url string, kick func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if url == "" {
+		delete(b.wda, udid)
+		delete(b.kick, udid)
+		return
+	}
+	b.wda[udid] = wda.New(url)
+	if kick != nil {
+		b.kick[udid] = kick
+	} else {
+		delete(b.kick, udid)
+	}
+}
+
 // NewDevice builds the physical-device actions backend.
 func NewDevice(opts ...DeviceOption) *DeviceBackend {
 	b := &DeviceBackend{
 		runner: ExecRunner{},
 		xcrun:  "xcrun",
 		wda:    map[string]*wda.Client{},
+		mirror: map[string]*mirror.Client{},
 		kick:   map[string]func(){},
 	}
 	for _, o := range opts {
@@ -104,6 +162,11 @@ var deviceUnimplementedKinds = map[string]bool{
 // Dispatch implements Backend.
 func (b *DeviceBackend) Dispatch(ctx context.Context, udid string, req proto.ActionRequest) (proto.ActionResult, error) {
 	h, ok := b.handlers[req.Kind]
+	if b.mirrorFor(udid) != nil {
+		if mh, mok := mirrorHandlers[req.Kind]; mok {
+			h, ok = mh, true
+		}
+	}
 	if !ok {
 		if deviceUnimplementedKinds[req.Kind] {
 			return proto.ActionResult{}, notImplemented("action kind %q is not implemented for physical devices", req.Kind)
@@ -150,7 +213,10 @@ func isDeviceDisconnected(stderr []byte) bool {
 // wdaFor returns the WDA client for a device, or an "unavailable" error
 // when none is configured.
 func (b *DeviceBackend) wdaFor(udid string) (*wda.Client, error) {
-	if c, ok := b.wda[udid]; ok && c != nil {
+	b.mu.RLock()
+	c, ok := b.wda[udid]
+	b.mu.RUnlock()
+	if ok && c != nil {
 		return c, nil
 	}
 	return nil, unavailable("WebDriverAgent is not configured for device %s; start WDA on the device and pass --device-wda %s=<url>", udid, udid)
@@ -330,6 +396,10 @@ func handleDeviceObserve(ctx context.Context, b *DeviceBackend, udid string, p m
 	return res, nil
 }
 
+// pngMagic is the PNG file signature (WDA builds may answer other image
+// types; see wda.Client.Screenshot).
+var pngMagic = []byte("\x89PNG\r\n\x1a\n")
+
 func handleDeviceScreenshot(ctx context.Context, b *DeviceBackend, udid string, p map[string]any) (map[string]any, error) {
 	c, err := b.wdaFor(udid)
 	if err != nil {
@@ -346,7 +416,10 @@ func handleDeviceScreenshot(ctx context.Context, b *DeviceBackend, udid string, 
 	if err != nil {
 		return nil, b.wdaFail(udid, "screenshot", err)
 	}
-	if format != "png" || maxDim > 0 {
+	// WDA builds may answer a non-PNG image (e.g. image/jpeg), so the
+	// default fast path only skips the transcode when the bytes already
+	// match the requested format.
+	if format != "png" || maxDim > 0 || !bytes.HasPrefix(img, pngMagic) {
 		img, err = imgutil.Transcode(img, format, quality, maxDim)
 		if err != nil {
 			return nil, internal("screenshot transform failed: %v", err)
@@ -372,7 +445,10 @@ func firstLine(b []byte) string {
 // transport-level failures (a dropped tunnel, a dead runner), kicks the
 // device's WDA supervisor so it relaunches promptly.
 func (b *DeviceBackend) wdaFail(udid, op string, err error) error {
-	if k := b.kick[udid]; k != nil && isTransientWDAError(err) {
+	b.mu.RLock()
+	k := b.kick[udid]
+	b.mu.RUnlock()
+	if k != nil && isTransientWDAError(err) {
 		k()
 	}
 	return unavailable("wda %s failed: %v", op, err)

@@ -16,14 +16,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
 	"github.com/BariBariGood/manzanas/internal/actions/mockapp"
-	"github.com/BariBariGood/manzanas/internal/actions/wda"
 	"github.com/BariBariGood/manzanas/internal/buildinfo"
+	devcfg "github.com/BariBariGood/manzanas/internal/devices"
 	"github.com/BariBariGood/manzanas/internal/journal"
 	"github.com/BariBariGood/manzanas/internal/lease"
 	"github.com/BariBariGood/manzanas/internal/record"
@@ -92,24 +91,6 @@ func defaultStateDir() string {
 	return filepath.Join(home, ".manzanasd")
 }
 
-// parseDeviceWDA parses the --device-wda flag: comma-separated
-// "<udid>=<url>" pairs mapping a device to its WebDriverAgent endpoint.
-func parseDeviceWDA(spec string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, pair := range strings.Split(spec, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		udid, url, ok := strings.Cut(pair, "=")
-		if !ok || udid == "" || url == "" {
-			return nil, fmt.Errorf("invalid --device-wda entry %q (want <udid>=<url>)", pair)
-		}
-		out[udid] = url
-	}
-	return out, nil
-}
-
 // provisionPool brings the configured sims into the pool, retrying failed
 // adds with capped exponential backoff: startup adds race the load spike
 // of whatever launched the daemon (a stamp, a build), and a one-shot add
@@ -160,21 +141,32 @@ func provisionPool(ctx context.Context, pool *warm.Pool, udids []string, log *sl
 	}
 }
 
+// statOK reports whether a path exists (any stat success counts).
+func statOK(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 func main() {
 	var (
-		addr            = flag.String("addr", envOr("MANZANASD_ADDR", ":7433"), "listen address (env MANZANASD_ADDR)")
-		mock            = flag.Bool("mock", envBool("MANZANASD_MOCK"), "use the mock registry instead of simctl (env MANZANASD_MOCK)")
-		devices         = flag.Bool("devices", envBool("MANZANASD_DEVICES"), "also enumerate physical devices via devicectl as leasable targets (env MANZANASD_DEVICES)")
-		deviceWDA       = flag.String("device-wda", envOr("MANZANASD_DEVICE_WDA", ""), "comma-separated <udid>=<url> WebDriverAgent endpoints for device HID/observe/screenshot (env MANZANASD_DEVICE_WDA)")
-		deviceWDALaunch = flag.String("device-wda-launch", envOr("MANZANASD_DEVICE_WDA_LAUNCH", ""), "comma-separated <udid>=<spec> WDA auto-launch specs: devicectl:<runner-bundle-id> or xctestrun:<path>; requires a matching --device-wda entry (env MANZANASD_DEVICE_WDA_LAUNCH)")
-		stateDir        = flag.String("state-dir", envOr("MANZANASD_STATE_DIR", defaultStateDir()), "directory for the snapshot index (env MANZANASD_STATE_DIR)")
-		axePath         = flag.String("axe", envOr("MANZANASD_AXE", ""), "path to the AXe binary (env MANZANASD_AXE; default: ~/bin/axe or $PATH)")
-		simbridge       = flag.String("simbridge", envOr("MANZANASD_SIMBRIDGE", ""), "path to the simbridge warm-action helper (env MANZANASD_SIMBRIDGE; default: ~/bin/simbridge or $PATH)")
-		warmOff         = flag.Bool("no-warm", envBool("MANZANASD_NO_WARM"), "disable the warm actions backend even when simbridge is present (env MANZANASD_NO_WARM)")
-		warmMax         = flag.Int("warm-max-targets", actions.DefaultMaxWarmTargets, "max simulators kept warm at once")
-		warmTTL         = flag.Duration("warm-idle-ttl", actions.DefaultWarmIdleTTL, "shut a warm helper down after this much inactivity")
-		showVersion     = flag.Bool("version", false, "print version and exit")
-		leaseGrace      = flag.Duration("lease-renew-grace", envDuration("MANZANASD_LEASE_RENEW_GRACE", lease.DefaultRenewGrace), "renewal grace window after an active lease's nominal expiry during which renew still succeeds and the reset/reclaim is deferred; 0 disables (env MANZANASD_LEASE_RENEW_GRACE)")
+		addr             = flag.String("addr", envOr("MANZANASD_ADDR", ":7433"), "listen address (env MANZANASD_ADDR)")
+		mock             = flag.Bool("mock", envBool("MANZANASD_MOCK"), "use the mock registry instead of simctl (env MANZANASD_MOCK)")
+		devices          = flag.Bool("devices", envBool("MANZANASD_DEVICES"), "also enumerate physical devices via devicectl as leasable targets (env MANZANASD_DEVICES)")
+		deviceWDA        = flag.String("device-wda", envOr("MANZANASD_DEVICE_WDA", ""), "comma-separated <udid>=<url> WebDriverAgent endpoints for device HID/observe/screenshot (env MANZANASD_DEVICE_WDA)")
+		deviceWDALaunch  = flag.String("device-wda-launch", envOr("MANZANASD_DEVICE_WDA_LAUNCH", ""), "comma-separated <udid>=<spec> WDA auto-launch specs: devicectl:<runner-bundle-id> or xctestrun:<path>; requires a matching --device-wda entry (env MANZANASD_DEVICE_WDA_LAUNCH)")
+		deviceWDAForward = flag.String("device-wda-forward", envOr("MANZANASD_DEVICE_WDA_FORWARD", ""), "comma-separated <udid>=<local:remote> supervised usbmux port forwards (iproxy/pymobiledevice3), kept alive like the WDA runner; requires a matching --device-wda entry (env MANZANASD_DEVICE_WDA_FORWARD)")
+		deviceBackend    = flag.String("device-backend", envOr("MANZANASD_DEVICE_BACKEND", ""), "comma-separated <udid>=wda|mirror per-device action backends; default wda. mirror drives the phone through macOS iPhone Mirroring via the mirrord helper (env MANZANASD_DEVICE_BACKEND)")
+		mirrorSocket     = flag.String("device-mirror-socket", envOr("MANZANASD_DEVICE_MIRROR_SOCKET", devcfg.DefaultMirrorSocket()), "unix socket of the mirrord GUI helper serving mirror-backed devices (env MANZANASD_DEVICE_MIRROR_SOCKET)")
+		devicesConfig    = flag.String("devices-config", envOr("MANZANASD_DEVICES_CONFIG", ""), "devices config file (JSON, see docs/devices.md); loaded at startup and re-read on SIGHUP, replacing the --devices/--device-wda* flags; default <state-dir>/devices.json when that file exists (env MANZANASD_DEVICES_CONFIG)")
+		installService   = flag.Bool("install-service", false, "install (or refresh) the per-user launchd LaunchAgent running this binary with the current flags, then exit; idempotent (macOS only)")
+		stateDir         = flag.String("state-dir", envOr("MANZANASD_STATE_DIR", defaultStateDir()), "directory for the snapshot index (env MANZANASD_STATE_DIR)")
+		axePath          = flag.String("axe", envOr("MANZANASD_AXE", ""), "path to the AXe binary (env MANZANASD_AXE; default: ~/bin/axe or $PATH)")
+		simbridge        = flag.String("simbridge", envOr("MANZANASD_SIMBRIDGE", ""), "path to the simbridge warm-action helper (env MANZANASD_SIMBRIDGE; default: ~/bin/simbridge or $PATH)")
+		warmOff          = flag.Bool("no-warm", envBool("MANZANASD_NO_WARM"), "disable the warm actions backend even when simbridge is present (env MANZANASD_NO_WARM)")
+		warmMax          = flag.Int("warm-max-targets", actions.DefaultMaxWarmTargets, "max simulators kept warm at once")
+		warmTTL          = flag.Duration("warm-idle-ttl", actions.DefaultWarmIdleTTL, "shut a warm helper down after this much inactivity")
+		showVersion      = flag.Bool("version", false, "print version and exit")
+		leaseGrace       = flag.Duration("lease-renew-grace", envDuration("MANZANASD_LEASE_RENEW_GRACE", lease.DefaultRenewGrace), "renewal grace window after an active lease's nominal expiry during which renew still succeeds and the reset/reclaim is deferred; 0 disables (env MANZANASD_LEASE_RENEW_GRACE)")
 
 		poolSims          = flag.String("pool-sims", envOr("MANZANASD_POOL_SIMS", ""), "comma-separated sim UDIDs to keep in the park/thaw warm pool (env MANZANASD_POOL_SIMS)")
 		poolSlimProfile   = flag.String("pool-slim-profile", envOr("MANZANASD_POOL_SLIM_PROFILE", ""), "simslim profile applied to pool sims before parking (env MANZANASD_POOL_SLIM_PROFILE)")
@@ -212,6 +204,14 @@ func main() {
 		return
 	}
 
+	if *installService {
+		if err := installLaunchdService(os.Args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "--install-service:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	// Bind before any stateful setup (pool adoption SIGSTOPs sims, the
@@ -224,6 +224,7 @@ func main() {
 	}
 
 	var reg registry.Registry
+	var devToggle *registry.ToggleRegistry
 	switch {
 	case *mock:
 		log.Info("using mock registry")
@@ -232,16 +233,15 @@ func main() {
 		log.Warn("not on macOS; falling back to mock registry (pass --mock to silence)")
 		reg = registry.NewMock()
 	default:
-		reg = registry.NewSimctl()
-		if *devices {
-			// Physical devices join the same registry (and thus lease
-			// matching) behind the merged view; they are excluded from the
-			// warm pool, state engine, and streaming by construction (pool
-			// membership is explicit UDIDs; state/stream backends are
-			// simctl-based).
-			reg = registry.Merge(reg, registry.NewDevicectl())
-			log.Info("physical device targets enabled (devicectl)")
-		}
+		// Physical devices join the same registry (and thus lease
+		// matching) behind a merged view that can be switched on at
+		// runtime (--devices, the devices config file, SIGHUP, or POST
+		// /v0/devices), so attaching a phone never requires a daemon
+		// restart. Devices are excluded from the warm pool, state
+		// engine, and streaming by construction (pool membership is
+		// explicit UDIDs; state/stream backends are simctl-based).
+		devToggle = registry.NewToggle(registry.NewSimctl(), registry.NewDevicectl())
+		reg = devToggle
 	}
 
 	// The state engine + image store come first so the pool's erase path
@@ -380,79 +380,93 @@ func main() {
 			log.Info("simbridge not found; actions use the cold AXe path (build helpers/simbridge to enable warm actions)")
 		}
 	}
+	// Runtime device configuration. The flag pile (--devices,
+	// --device-wda, --device-wda-launch, --device-wda-forward) assembles
+	// the initial config for backwards compatibility; a devices config
+	// file replaces it when present. The manager owns the per-device WDA
+	// runner + forward supervisors and applies new configs live —
+	// through SIGHUP (config file re-read) or POST /v0/devices — so
+	// attaching a phone never requires killing the daemon.
 	stopWDASupervisors := func() {}
-	if *devices {
-		wdaMap, err := parseDeviceWDA(*deviceWDA)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		launchMap, err := parseDeviceWDA(*deviceWDALaunch)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		// Each device with both a WDA URL and a launch spec gets a
-		// supervisor that keeps its WebDriverAgent alive for the daemon's
-		// lifetime (probe, launch when down, relaunch on failure).
-		supCtx, supStop := context.WithCancel(context.Background())
-		var supWG sync.WaitGroup
-		// Validate every launch spec before starting any supervisor: a
-		// bad entry must fail fast without leaving an already-launched
-		// xcodebuild child behind (os.Exit skips the deferred cleanup).
-		type devSup struct {
-			udid     string
-			url      string
-			launcher wda.Launcher
-		}
-		var sups []devSup
-		for udid, spec := range launchMap {
-			url, ok := wdaMap[udid]
-			if !ok {
-				fmt.Fprintf(os.Stderr, "--device-wda-launch %s=%s has no matching --device-wda URL\n", udid, spec)
-				os.Exit(1)
+	if devToggle != nil {
+		devBackend := actions.NewDevice()
+		router := actions.NewKindRouter(reg, backend, devBackend, devToggle.Enabled)
+		backend = router
+		devmgr := devcfg.NewManager(devBackend, func(on bool, deviceUDIDs []string) {
+			devToggle.SetEnabled(on)
+			srv.SetDevicesEnabled(on)
+			// The router's kind cache reflects the registry's previous
+			// view; a toggle flip changes which UDIDs resolve as devices.
+			router.InvalidateKinds()
+			// Pin the config's UDIDs as devices so a lease granted before
+			// its first action still hits the device backend (with a clear
+			// "unavailable") after a toggle-off, not simulator tooling.
+			router.SeedDeviceKinds(deviceUDIDs)
+			if on {
+				log.Info("physical device targets enabled (devicectl)")
 			}
-			launcher, err := wda.ParseLauncher(udid, spec)
-			if err != nil {
+		}, log)
+		// Supervisors own long-lived xcodebuild/iproxy children; wait
+		// for their launcher.Stop cleanup so a daemon exit never orphans
+		// a test session holding the phone.
+		stopWDASupervisors = devmgr.Close
+		defer stopWDASupervisors()
+		srv.SetDevicesManager(devmgr)
+
+		cfg, err := devcfg.FromFlags(*devices, *deviceWDA, *deviceWDALaunch, *deviceWDAForward, *deviceBackend, *mirrorSocket)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		cfgPath := *devicesConfig
+		if cfgPath == "" {
+			// Convention-over-configuration default: a devices.json in
+			// the state dir is picked up without any flags at all.
+			if p := filepath.Join(*stateDir, "devices.json"); statOK(p) {
+				cfgPath = p
+			}
+		}
+		if cfgPath != "" {
+			fileCfg, err := devcfg.Load(cfgPath)
+			switch {
+			case err == nil:
+				log.Info("devices config file loaded (overrides --devices/--device-wda* flags)", "path", cfgPath)
+				cfg = fileCfg
+			case os.IsNotExist(err):
+				// Not created yet (e.g. `device onboard --config-out`
+				// runs after the service is installed): start with the
+				// flag-derived config; SIGHUP picks the file up later.
+				log.Info("devices config file missing; starting without it (SIGHUP to load once created)", "path", cfgPath)
+			default:
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
-			sups = append(sups, devSup{udid: udid, url: url, launcher: launcher})
 		}
-		kicks := map[string]func(){}
-		for _, d := range sups {
-			sup := wda.NewSupervisor(wda.New(d.url), d.launcher, log)
-			kicks[d.udid] = sup.Kick
-			supWG.Add(1)
-			go func() {
-				defer supWG.Done()
-				sup.Run(supCtx)
-			}()
-			log.Info("device WDA supervisor started", "udid", d.udid, "launcher", d.launcher.String())
+		if err := devmgr.Apply(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
-		// Supervisors own long-lived xcodebuild children; wait for their
-		// launcher.Stop cleanup so a daemon exit never orphans a test
-		// session holding the phone.
-		var supOnce sync.Once
-		stopWDASupervisors = func() {
-			supOnce.Do(func() {
-				supStop()
-				done := make(chan struct{})
-				go func() { supWG.Wait(); close(done) }()
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					log.Warn("wda supervisors did not stop in time")
+		// SIGHUP re-reads the devices config file and applies it live.
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		go func() {
+			for range hup {
+				path := cfgPath
+				if path == "" {
+					path = filepath.Join(*stateDir, "devices.json")
 				}
-			})
-		}
-		defer stopWDASupervisors()
-		dev := actions.NewDevice(actions.WithDeviceWDA(wdaMap), actions.WithDeviceWDAKick(kicks))
-		backend = actions.NewKindRouter(reg, backend, dev)
-		srv.SetDevicesEnabled(true)
-		for udid, u := range wdaMap {
-			log.Info("device WDA endpoint configured", "udid", udid, "url", u)
-		}
+				fileCfg, err := devcfg.Load(path)
+				if err != nil {
+					log.Error("SIGHUP: devices config reload failed; keeping current config", "path", path, "err", err)
+					continue
+				}
+				if err := devmgr.Apply(fileCfg); err != nil {
+					log.Error("SIGHUP: devices config apply failed; keeping current config", "path", path, "err", err)
+					continue
+				}
+				log.Info("devices config reloaded", "path", path, "enabled", fileCfg.Enabled, "devices", len(fileCfg.WDA))
+			}
+		}()
 	}
 	srv.SetActions(backend)
 

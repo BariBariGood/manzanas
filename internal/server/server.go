@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
@@ -56,9 +57,15 @@ type Server struct {
 	journal  *journal.Recorder // nil (no-op) until the journal is wired
 	recorder *record.Manager   // nil until video recording is wired (endpoints 501)
 	// devicesEnabled marks that the registry may contain physical
-	// device targets (--devices); guards that only exist to protect
-	// phones stay out of simulator-only deployments.
-	devicesEnabled bool
+	// device targets (--devices or a runtime devices config); guards
+	// that only exist to protect phones stay out of simulator-only
+	// deployments. Atomic: device enumeration can be toggled at runtime
+	// (POST /v0/devices, SIGHUP config reload) while requests are served.
+	devicesEnabled atomic.Bool
+	// devmgr applies runtime device configs (POST /v0/devices); nil
+	// means the daemon has no device manager (mock builds) and the
+	// devices admin routes return not_implemented.
+	devmgr DevicesManager
 	// parked reports whether a target is SIGSTOPped in the warm pool;
 	// nil means no pool. Streams refuse parked targets (frame capture
 	// against a frozen tree hangs) — acquiring a lease thaws them.
@@ -216,7 +223,18 @@ func (s *Server) SetImages(st state.Images) { s.images = st }
 
 // SetDevicesEnabled marks that physical device targets may exist in the
 // registry (--devices), enabling the device-protection guards.
-func (s *Server) SetDevicesEnabled(on bool) { s.devicesEnabled = on }
+func (s *Server) SetDevicesEnabled(on bool) { s.devicesEnabled.Store(on) }
+
+// DevicesManager applies runtime device configuration (see
+// internal/devices.Manager).
+type DevicesManager interface {
+	Apply(cfg proto.DevicesConfig) error
+	Current() proto.DevicesConfig
+}
+
+// SetDevicesManager wires the runtime device-config manager; when unset
+// the /v0/devices admin routes return not_implemented.
+func (s *Server) SetDevicesManager(m DevicesManager) { s.devmgr = m }
 
 // ResetSink returns a lease.ResetFunc that runs each ended lease's
 // requested auto-reset through the state engine. Pass it to
@@ -246,7 +264,7 @@ func (s *Server) ResetSink() func(proto.Lease) error {
 		// sub-registry — quarantines the target rather than erasing a
 		// maybe-phone or handing the next holder a dirty simulator. On
 		// simulator-only daemons no lookup happens at all.
-		if s.devicesEnabled {
+		if s.devicesEnabled.Load() {
 			t, gerr := s.reg.Get(ctx, l.TargetUDID)
 			if gerr == nil && t.Kind == proto.TargetDevice {
 				s.log.Warn("skipping post-lease reset: target is a physical device",
@@ -430,6 +448,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v0/dash/targets/{udid}/release", s.handleDashReleaseLease)
 	mux.HandleFunc("POST /v0/dash/targets/{udid}/recording/stop", s.handleDashRecordingStop)
 	mux.HandleFunc("GET /v0/status", s.handleStatus)
+	mux.HandleFunc("GET /v0/devices", s.handleDevicesGet)
+	mux.HandleFunc("POST /v0/devices", s.handleDevicesApply)
 	mux.HandleFunc("POST /v0/pool/advise", s.handleAdvisePool)
 	mux.HandleFunc("GET /v0/targets", s.handleListTargets)
 	mux.HandleFunc("POST /v0/targets/{udid}/boot", s.handleBoot)

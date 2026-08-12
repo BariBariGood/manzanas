@@ -58,7 +58,7 @@ func (s *Server) leasedTarget(ctx context.Context, w http.ResponseWriter, leaseI
 // when devices are enabled; an indeterminate lookup falls through to the
 // engine, which fails loudly on its own.
 func (s *Server) stateOpOnDevice(ctx context.Context, udid string) bool {
-	if !s.devicesEnabled {
+	if !s.devicesEnabled.Load() {
 		return false
 	}
 	t, err := s.reg.Get(ctx, udid)

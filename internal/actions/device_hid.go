@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions/wda"
 )
@@ -148,6 +149,9 @@ func handleDeviceWaitTreeStable(ctx context.Context, b *DeviceBackend, udid stri
 // loops keep polling until their own budget runs out. Every WDA source
 // read is already an un-cached round trip, so refresh is a no-op here.
 func (b *DeviceBackend) observeOnce(ctx context.Context, udid string, _ bool) (observation, error) {
+	if b.mirrorFor(udid) != nil {
+		return b.mirrorObserveOnce(ctx, udid)
+	}
 	c, err := b.wdaFor(udid)
 	if err != nil {
 		return observation{}, err
@@ -155,7 +159,10 @@ func (b *DeviceBackend) observeOnce(ctx context.Context, udid string, _ bool) (o
 	src, err := c.Source(ctx)
 	if err != nil {
 		if isTransientWDAError(err) {
-			if k := b.kick[udid]; k != nil {
+			b.mu.RLock()
+			k := b.kick[udid]
+			b.mu.RUnlock()
+			if k != nil {
 				k()
 			}
 			return observation{}, errNotYet
@@ -169,8 +176,14 @@ func (b *DeviceBackend) observeOnce(ctx context.Context, udid string, _ bool) (o
 	return observation{nodes: nodes, viewport: wdaViewport(src)}, nil
 }
 
-// swipeXY implements scrollDriver via WDA.
+// swipeXY implements scrollDriver via WDA (or the mirror helper).
 func (b *DeviceBackend) swipeXY(ctx context.Context, udid string, x1, y1, x2, y2 float64) error {
+	if m := b.mirrorFor(udid); m != nil {
+		if err := m.Swipe(ctx, x1, y1, x2, y2, 500*time.Millisecond); err != nil {
+			return mirrorFail("swipe", err)
+		}
+		return nil
+	}
 	c, err := b.wdaFor(udid)
 	if err != nil {
 		return err
@@ -181,8 +194,14 @@ func (b *DeviceBackend) swipeXY(ctx context.Context, udid string, x1, y1, x2, y2
 	return nil
 }
 
-// tapXY implements elementDriver via WDA.
+// tapXY implements elementDriver via WDA (or the mirror helper).
 func (b *DeviceBackend) tapXY(ctx context.Context, udid string, x, y float64) error {
+	if m := b.mirrorFor(udid); m != nil {
+		if err := m.Tap(ctx, x, y); err != nil {
+			return mirrorFail("tap", err)
+		}
+		return nil
+	}
 	c, err := b.wdaFor(udid)
 	if err != nil {
 		return err
@@ -203,8 +222,17 @@ func (b *DeviceBackend) validateTypeOpts(opts typeOpts) error {
 	return nil
 }
 
-// typeInto implements elementDriver via WDA.
+// typeInto implements elementDriver via WDA (or the mirror helper).
 func (b *DeviceBackend) typeInto(ctx context.Context, udid, text string, opts typeOpts) (int, error) {
+	if m := b.mirrorFor(udid); m != nil {
+		if err := validateMirrorTypeOpts(opts); err != nil {
+			return 0, err
+		}
+		if err := m.Type(ctx, text); err != nil {
+			return 0, mirrorFail("type", err)
+		}
+		return len([]rune(text)), nil
+	}
 	if err := b.validateTypeOpts(opts); err != nil {
 		return 0, err
 	}

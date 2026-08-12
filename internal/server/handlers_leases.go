@@ -121,7 +121,7 @@ func (s *Server) deviceResetConflict(ctx context.Context, req proto.AcquireLease
 	}
 	// Only daemons that can enumerate devices pay for the registry
 	// lookups below; a simulator-only fleet can never match one.
-	if !s.devicesEnabled {
+	if !s.devicesEnabled.Load() {
 		return false
 	}
 	if req.UDID != "" {
@@ -167,7 +167,7 @@ func hasAllLabels(have, want []string) bool {
 // it, which the pre-grant check cannot see): the lease is released and
 // the acquire refused, rather than silently skipping the reset later.
 func (s *Server) refuseDeviceResetGrant(ctx context.Context, l proto.Lease) bool {
-	if !s.devicesEnabled || l.Reset == "" || l.Reset == "none" || l.TargetUDID == "" {
+	if !s.devicesEnabled.Load() || l.Reset == "" || l.Reset == "none" || l.TargetUDID == "" {
 		return false
 	}
 	t, err := s.reg.Get(ctx, l.TargetUDID)
