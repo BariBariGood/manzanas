@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/983b0548-df1a-41a3-812c-f0f39cfaa01c
 *1 orchestrator, 7 Codex agents, 7 simulators across 3 Macs — leases mean
 nobody trips over anybody. Real time, no edits.*
 
-**Website: [manzanasgo.vercel.app](https://manzanasgo.vercel.app)** (source in
+**Website: [manzanas.dapsdev.dev](https://manzanas.dapsdev.dev)** (source in
 [`site/`](site/)).
 
 ## Install
