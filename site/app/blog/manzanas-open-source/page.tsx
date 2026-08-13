@@ -7,7 +7,7 @@ import CopyBlock from "../../../components/CopyBlock";
 export const metadata: Metadata = {
   title: "manzanas is open source — manzanas blog",
   description:
-    "The Mac daemon for multi-agent iOS simulator fleets is now public: leases, a park/thaw warm pool with 26 ms thaws, ~130 ms warm taps, MJPEG streaming, deterministic state, and an exportable run journal. MIT licensed.",
+    "The Mac daemon for multi-agent iOS simulator fleets is now public: leases, a park/thaw warm pool with 26 ms thaws, ~130 ms warm taps, MJPEG streaming, deterministic state, and an exportable run journal. Apache-2.0 licensed.",
   robots: { index: false, follow: false },
 };
 
@@ -27,7 +27,7 @@ export default function Post() {
         >
           GitHub
         </a>
-        , MIT licensed. One daemon per Mac owns everything stateful: the
+        , Apache-2.0 licensed. One daemon per Mac owns everything stateful: the
         simulator registry, TTL-bounded leases with FIFO queues, a park/thaw
         warm pool, cold and warm action backends, MJPEG streaming, snapshots
         and golden images, video capture, and an append-only run journal

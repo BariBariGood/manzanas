@@ -44,7 +44,7 @@ export default function BlogLayout({
           <div className="flex items-center gap-2">
             <AppleLeaf className="h-4 w-4 text-[#c22214]" />
             <span className="text-xs font-semibold text-[#1d1d1f]">manzanas</span>
-            <span className="text-xs text-[#6e6e73]">· MIT License</span>
+            <span className="text-xs text-[#6e6e73]">· Apache-2.0 License</span>
           </div>
           <Link
             href="/"

@@ -2,7 +2,7 @@
   "name": "manzanasd-client",
   "version": "0.2.0",
   "description": "Thin npm wrapper for the manzanas CLI: downloads the right release binary on install and proxies to it.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/BariBariGood/manzanas.git",

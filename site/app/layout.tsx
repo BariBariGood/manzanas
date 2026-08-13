@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://manzanas.dapsdev.dev"),
   title: "manzanas — tends your orchard of Macs and simulators",
   description:
-    "Multi-agent iOS simulator fleet orchestration. Leases, queues, live MJPEG streaming, deterministic state, and an evidence journal — MIT-licensed, MCP-native.",
+    "Multi-agent iOS simulator fleet orchestration. Leases, queues, live MJPEG streaming, deterministic state, and an evidence journal — Apache-2.0-licensed, MCP-native.",
   openGraph: {
     title: "manzanas",
     description:

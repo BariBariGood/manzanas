@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/BariBariGood/manzanas)](https://github.com/BariBariGood/manzanas/releases)
 [![CI](https://github.com/BariBariGood/manzanas/actions/workflows/ci.yml/badge.svg)](https://github.com/BariBariGood/manzanas/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/BariBariGood/manzanas)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/github/license/BariBariGood/manzanas)](LICENSE)
 [![AllMCPs Verified](https://allmcps.com/api/badge/manzanas)](https://allmcps.com/mcp/manzanas?verify=cc5ceeeb-24c5-4ac5-9327-f57ad5eb1165)
 
 A Mac daemon for multi-agent iOS simulator fleet orchestration: leases,
@@ -219,4 +219,6 @@ paths are mocked).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE). Releases up to and including v0.6.0
+(and their existing tags) were published under MIT and remain MIT; later
+releases are Apache-2.0.

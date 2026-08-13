@@ -21,7 +21,7 @@ export default function Footer() {
             <h2 className="headline headline-xl mx-auto mt-8 text-[40px] sm:text-[56px]">
               Open source.
               <br />
-              <span className="phrase-gray">Protocol-first. MIT.</span>
+              <span className="phrase-gray">Protocol-first. Apache-2.0.</span>
             </h2>
             <p className="copy-secondary mx-auto mt-6 max-w-[540px] text-[19px] leading-relaxed">
               The protocol is a published spec — anyone can build on it.
@@ -54,7 +54,7 @@ export default function Footer() {
           <div className="flex items-center gap-3">
             <AppleLeaf className="h-4 w-4 text-[#c22214]" />
             <span className="text-xs font-semibold text-[#1d1d1f]">manzanas</span>
-            <span className="text-xs text-[#6e6e73]">· MIT License</span>
+            <span className="text-xs text-[#6e6e73]">· Apache-2.0 License</span>
             <a href="https://allmcps.com/mcp/manzanas">
               <img
                 src="https://allmcps.com/api/badge/manzanas?style=directory"

@@ -42,6 +42,7 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
+      - NOTICE
       - README.md
       - deploy/com.baribarigood.manzanasd.plist
       - deploy/install.sh
