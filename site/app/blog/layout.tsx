@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { AppleLeaf } from "../../components/Nav";
 
 export const metadata: Metadata = {
-  title: "Blog — manzanas",
+  title: "Blog, manzanas",
   description: "Notes from building and running an orchard of Macs and simulators.",
 };
 

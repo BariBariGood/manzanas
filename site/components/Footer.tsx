@@ -24,7 +24,7 @@ export default function Footer() {
               <span className="phrase-gray">Protocol-first. Apache-2.0.</span>
             </h2>
             <p className="copy-secondary mx-auto mt-6 max-w-[540px] text-[19px] leading-relaxed">
-              The protocol is a published spec — anyone can build on it.
+              The protocol is a published spec, anyone can build on it.
               Free, open, and yours to run.
             </p>
             <div className="mt-10 flex flex-wrap items-center justify-center gap-4">

@@ -10,9 +10,9 @@ const daemonRows: [string, string][] = [
 ];
 
 const clientRows = [
-  "CLI — lease / tap / type / observe",
-  "MCP server — manzanas mcp (stdio)",
-  "stream viewer — browser",
+  "CLI, lease / tap / type / observe",
+  "MCP server, manzanas mcp (stdio)",
+  "stream viewer, browser",
 ];
 
 export default function Architecture() {
@@ -26,8 +26,7 @@ export default function Architecture() {
             <span className="phrase-gray">One stateful daemon per Mac.</span>
           </h2>
           <p className="copy-secondary mx-auto mt-6 max-w-[600px] text-[19px] leading-relaxed">
-            Agents and humans talk to the daemon over one simple JSON API —
-            HTTP for requests, WebSocket for streams.
+            Agents and humans talk to the daemon over one simple JSON API, HTTP for requests, WebSocket for streams.
           </p>
         </Reveal>
 
@@ -49,14 +48,14 @@ export default function Architecture() {
               eyebrow="EACH MAC HOST"
               title="manzanasd"
               subtitle="Go daemon · owns everything stateful"
-              rows={daemonRows.map(([n, d]) => `${n} — ${d}`)}
+              rows={daemonRows.map(([n, d]) => `${n}, ${d}`)}
               mono
             />
             <Wire />
             <MobileBox
               eyebrow="SIMULATORS"
               title="iOS simulators"
-              subtitle="leased · queued · idle — sims + devices"
+              subtitle="leased · queued · idle, sims + devices"
               rows={[]}
             />
           </div>

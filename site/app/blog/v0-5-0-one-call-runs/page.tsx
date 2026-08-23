@@ -4,9 +4,9 @@ import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
   title:
-    "manzanas v0.5.0: one call from clean simulator to evidence — manzanas blog",
+    "manzanas v0.5.0: one call from clean simulator to evidence, manzanas blog",
   description:
-    "v0.5.0 ships the one-call runs API: POST /v0/runs takes a declarative YAML run-spec and executes the whole agent loop — lease, boot, install, launch, steps, artifacts, release — returning a PR-ready evidence export. Plus a fleet dashboard, broker-transparent clients, and a deterministic mock backend.",
+    "v0.5.0 ships the one-call runs API: POST /v0/runs takes a declarative YAML run-spec and executes the whole agent loop, lease, boot, install, launch, steps, artifacts, release, returning a PR-ready evidence export. Plus a fleet dashboard, broker-transparent clients, and a deterministic mock backend.",
 };
 
 const SPEC = `# login-smoke.yaml
@@ -45,7 +45,7 @@ const STEP = `steps:
     action: tap_element        # any action kind: tap, swipe, type,
     with: {id: username}       #   tap_element, wait_for_element,
     timeout_seconds: 15        #   scroll_to_element, observe,
-    continue_on_error: false   #   screenshot, audit, batch, ...`;
+    continue_on_error: false   #   screenshot, audit, batch...`;
 
 export default function Post() {
   return (
@@ -60,7 +60,7 @@ export default function Post() {
         Until now, driving a simulator through manzanas meant hand-sequencing
         the loop yourself: acquire a lease, boot the target, apply fixtures,
         install the app, launch it, dispatch a dozen actions, capture
-        artifacts, and — on <em>every</em> failure path — remember to release
+        artifacts, and, on <em>every</em> failure path, remember to release
         the lease. Every agent I watched do this wrote the same boilerplate,
         and every one of them occasionally forgot the release and orphaned a
         simulator.
@@ -80,7 +80,7 @@ export default function Post() {
 
       <H2>The YAML run-spec</H2>
       <P>
-        You describe what to lease, what to install, and what to do — the
+        You describe what to lease, what to install, and what to do, the
         native step DSL is just the existing action surface, one action per
         step, dispatched and journaled exactly like{" "}
         <code className="font-mono text-[14px]">POST /v0/actions</code>:
@@ -94,11 +94,10 @@ export default function Post() {
       </div>
       <P>
         <code className="font-mono text-[14px]">-o evidence.md</code> writes
-        the journal&apos;s markdown export — the same document as{" "}
+        the journal&apos;s markdown export, the same document as{" "}
         <code className="font-mono text-[14px]">
           GET /v0/journal/{"{run}"}/export.md
-        </code>{" "}
-        — with every step, tree hash, screenshot, and audit finding. Paste it
+        </code>{" "}, with every step, tree hash, screenshot, and audit finding. Paste it
         into a PR comment and the run argues for itself.
       </P>
 
@@ -115,8 +114,8 @@ export default function Post() {
         Steps stop at the first failure (later steps report{" "}
         <code className="font-mono text-[14px]">skipped</code>);{" "}
         <code className="font-mono text-[14px]">continue_on_error</code> lets
-        cleanup steps run anyway. Whatever fails — a step, a boot, an install,
-        the run budget expiring — the lease is <em>always</em> released with
+        cleanup steps run anyway. Whatever fails, a step, a boot, an install,
+        the run budget expiring, the lease is <em>always</em> released with
         its reset. The evidence trail of a red run is as complete as a green
         one.
       </P>
@@ -128,7 +127,7 @@ export default function Post() {
         API, sync by default, async with polling for long runs),{" "}
         <code className="font-mono text-[14px]">manzanas run spec.yaml</code>{" "}
         (the CLI), and the MCP <code className="font-mono text-[14px]">run</code>{" "}
-        tool — so an agent that speaks MCP gets the one-call loop for free.
+        tool, so an agent that speaks MCP gets the one-call loop for free.
         All three also work pointed at a broker: the run is placed on a fleet
         host with the same warm-first ranking as lease scheduling, then
         proxied to the owning daemon.
@@ -139,7 +138,7 @@ export default function Post() {
         <strong>Broker-transparent clients.</strong> The CLI and MCP server
         now follow a broker lease&apos;s{" "}
         <code className="font-mono text-[14px]">host_addr</code> annotation
-        automatically — point them at the broker and every lease-scoped call
+        automatically, point them at the broker and every lease-scoped call
         routes to the owning daemon. <strong>Fleet dashboard.</strong> The
         broker serves an aggregated{" "}
         <code className="font-mono text-[14px]">/dash</code> across every
@@ -150,8 +149,8 @@ export default function Post() {
         shared bearer token in front of the whole API.{" "}
         <strong>Mock actions backend.</strong>{" "}
         <code className="font-mono text-[14px]">--mock</code> now carries a
-        full deterministic action backend, so the entire loop — including
-        runs — works on a Linux box with no Mac at all. That one gets{" "}
+        full deterministic action backend, so the entire loop, including
+        runs, works on a Linux box with no Mac at all. That one gets{" "}
         <a className="underline" href="/blog/testing-ios-without-a-mac">
           its own post
         </a>

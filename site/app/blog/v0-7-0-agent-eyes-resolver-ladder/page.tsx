@@ -4,18 +4,18 @@ import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
   title:
-    "manzanas v0.7.0: teaching the agent to see — manzanas blog",
+    "manzanas v0.7.0: teaching the agent to see, manzanas blog",
   description:
-    "v0.7.0 ships the resolver ladder — accessibility first, then element map, template/NCC image match, and OCR as the last resort — plus deterministic UI asserts, a doctor command, and a one-command setup path via npx.",
+    "v0.7.0 ships the resolver ladder, accessibility first, then element map, template/NCC image match, and OCR as the last resort, plus deterministic UI asserts, a doctor command, and a one-command setup path via npx.",
 };
 
 const RESOLVER = `# every action resolves through the ladder, cheapest reliable layer first
 manzanas tap_element {label: "Sign In"}     # 1. accessibility tree (fastest, exact)
 manzanas tap_element {id: "login-button"}   #    falls through on miss...
 
-# 2. element map — stable per-app element ids across launches
-# 3. template match — normalized cross-correlation on the frame (NCC threshold)
-# 4. OCR — text exists somewhere, but no structure; last resort, always reported
+# 2. element map, stable per-app element ids across launches
+# 3. template match, normalized cross-correlation on the frame (NCC threshold)
+# 4. OCR, text exists somewhere, but no structure; last resort, always reported
 
 # whichever layer resolved, the journal records it:
 $ manzanas journal tail $MANZANAS_LEASE
@@ -35,7 +35,7 @@ export default function Post() {
         Every agent-driving-a-simulator demo you have seen quietly skips the
         hard part: <strong>how does the agent know what it is looking at?</strong>{" "}
         Coordinates break when layout moves. Screenshots-and-OCR guess. v0.7.0
-        is about replacing guessing with resolution — and then checking the
+        is about replacing guessing with resolution, and then checking the
         result mechanically.
       </P>
 
@@ -46,21 +46,21 @@ export default function Post() {
       </P>
       <ol className="my-4 list-decimal space-y-1 pl-6 text-[15px]">
         <li>
-          <strong>Accessibility tree</strong> — labels and ids straight from
+          <strong>Accessibility tree</strong>, labels and ids straight from
           the AX tree. Exact, fast (~36 ms warm), and stable across layout
           changes.
         </li>
         <li>
-          <strong>Element map</strong> — persistent per-app element ids that
+          <strong>Element map</strong>, persistent per-app element ids that
           survive relaunches, so a spec keeps working across runs.
         </li>
         <li>
-          <strong>Template match</strong> — grayscale normalized
+          <strong>Template match</strong>, grayscale normalized
           cross-correlation against a captured template, for custom-drawn
           controls the AX tree never exposes.
         </li>
         <li>
-          <strong>OCR</strong> — text-only fallback. Always reported as such,
+          <strong>OCR</strong>, text-only fallback. Always reported as such,
           so you know when your spec is standing on sand.
         </li>
       </ol>
@@ -69,8 +69,7 @@ export default function Post() {
       <H2>Deterministic asserts</H2>
       <P>
         Resolution answers &quot;where is it.&quot; Asserts answer &quot;is it
-        right.&quot; The same run-spec can now carry mechanical checks —
-        visibility, absence, touch-target size, label contrast — that fail the
+        right.&quot; The same run-spec can now carry mechanical checks, visibility, absence, touch-target size, label contrast, that fail the
         run with an annotated screenshot in the journal instead of passing
         silently while the button moved.
       </P>
@@ -84,11 +83,11 @@ export default function Post() {
       <H2>Also in v0.7.0</H2>
       <ul className="my-4 list-disc space-y-1 pl-6 text-[15px]">
         <li>
-          <code>manzanas doctor</code> — one-shot setup diagnosis where every
+          <code>manzanas doctor</code>, one-shot setup diagnosis where every
           failure names its fix.
         </li>
         <li>
-          <code>npx manzanasd-client@latest doctor</code> — the whole install
+          <code>npx manzanasd-client@latest doctor</code>, the whole install
           collapsed to one line; the npm wrapper fetches the right binary for
           your platform and proxies everything.
         </li>

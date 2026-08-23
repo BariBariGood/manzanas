@@ -5,7 +5,7 @@ const steps = [
   {
     n: "01",
     title: "Install and run the daemon",
-    body: "One line with npm (or brew). Run it on a Mac — or anywhere with a mock fleet.",
+    body: "One line with npm (or brew). Run it on a Mac, or anywhere with a mock fleet.",
     label: "install & run",
     code: `npx manzanasd-client@latest doctor   # binary + setup diagnosis in one shot
 

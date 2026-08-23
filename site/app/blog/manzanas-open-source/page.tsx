@@ -1,11 +1,11 @@
-// DRAFT — intentionally not listed in app/blog/page.tsx yet. Add it to the
+// DRAFT, intentionally not listed in app/blog/page.tsx yet. Add it to the
 // posts array there when the repo actually flips public.
 import type { Metadata } from "next";
 import { Bar, FieldNote, H2, P, StatCard } from "../../../components/BlogKit";
 import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
-  title: "manzanas is open source — manzanas blog",
+  title: "manzanas is open source, manzanas blog",
   description:
     "The Mac daemon for multi-agent iOS simulator fleets is now public: leases, a park/thaw warm pool with 26 ms thaws, ~130 ms warm taps, MJPEG streaming, deterministic state, and an exportable run journal. Apache-2.0 licensed.",
   robots: { index: false, follow: false },
@@ -19,8 +19,8 @@ export default function Post() {
         manzanas is open source
       </h1>
       <P>
-        manzanasd — the Mac daemon we built to let a swarm of AI agents share
-        iOS simulators without tripping over each other — is now public on{" "}
+        manzanasd, the Mac daemon we built to let a swarm of AI agents share
+        iOS simulators without tripping over each other, is now public on{" "}
         <a
           className="underline"
           href="https://github.com/BariBariGood/manzanas"

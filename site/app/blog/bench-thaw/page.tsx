@@ -1,13 +1,13 @@
-// DRAFT — intentionally not listed in app/blog/page.tsx yet. Add it to the
+// DRAFT, intentionally not listed in app/blog/page.tsx yet. Add it to the
 // posts array there when the repo flips public.
 import type { Metadata } from "next";
 import { Bar, FieldNote, H2, P, StatCard } from "../../../components/BlogKit";
 import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
-  title: "276 ms to a live iOS simulator — manzanas blog",
+  title: "276 ms to a live iOS simulator, manzanas blog",
   description:
-    "Re-measuring manzanasd's headline numbers on real hardware: park/thaw latency distributions, warm vs cold action latency, cold boot times, and idle CPU — with a `make bench` harness so you can reproduce every number.",
+    "Re-measuring manzanasd's headline numbers on real hardware: park/thaw latency distributions, warm vs cold action latency, cold boot times, and idle CPU, with a `make bench` harness so you can reproduce every number.",
   robots: { index: false, follow: false },
 };
 
@@ -38,7 +38,7 @@ export default function Post() {
         (Apple M3 Pro, 12 cores, 36 GB RAM), macOS 26.5.2, Xcode 26.5,
         driving an iPhone 17 simulator on iOS 26.5 slimmed with simslim.
         The machine was in normal use (browser open, other processes
-        running) — deliberately, because that is what a fleet box looks
+        running), deliberately, because that is what a fleet box looks
         like. 25 samples per latency phase, 5 per boot phase. Every number
         is client-observed: wall time of the HTTP request against a real
         daemon on localhost, including all protocol and bookkeeping
@@ -50,7 +50,7 @@ export default function Post() {
         A parked simulator is a booted simulator whose whole process tree is
         SIGSTOPped. Thawing is a SIGCONT to a PID list cached at park time.
         The daemon logs its side of every thaw, and on this hardware it
-        rounds to <strong>0 ms</strong> — the signal delivery itself is
+        rounds to <strong>0 ms</strong>, the signal delivery itself is
         sub-millisecond, not 26 ms. The 26 ms in the README was measured
         before the PID cache landed, when thaw still walked the process
         table.
@@ -60,8 +60,7 @@ export default function Post() {
         is lease-to-live: POST /v0/leases against a parked pool sim until
         the lease is active and the sim is running. That is{" "}
         <strong>276 ms p50, 337 ms p95</strong> (n=25). The same lease
-        acquire against an already-running, un-parked sim is 256 ms p50 —
-        so thawing adds about 20 ms end to end, and roughly 0.26 s of the
+        acquire against an already-running, un-parked sim is 256 ms p50, so thawing adds about 20 ms end to end, and roughly 0.26 s of the
         total is lease bookkeeping that both paths pay.
       </P>
       <div className="mt-6">
@@ -106,8 +105,7 @@ export default function Post() {
         Tap spread was tight in both modes (warm: 27–38 ms over 25 samples;
         cold: 937–1,007 ms), so the ~26x is not a percentile trick. Observe
         improves much less because its cost is the simulator serializing
-        its accessibility tree, which no client-side residency can remove —
-        the warm path only shaves the bootstrap share. The first warm
+        its accessibility tree, which no client-side residency can remove, the warm path only shaves the bootstrap share. The first warm
         action on a sim pays the helper spawn (first tap ~0.18 s, first
         observe ~4 s while the accessibility bridge comes up); the harness
         reports it separately as a warmup sample.
@@ -117,12 +115,12 @@ export default function Post() {
       <P>
         The README says parking took idle host CPU from ~213% to 1–6%. In
         this run, a freshly booted stock simulator idled at{" "}
-        <strong>~0% CPU</strong> once boot settled — no runaway{" "}
+        <strong>~0% CPU</strong> once boot settled, no runaway{" "}
         <code>apsd</code>, nothing to fix. Parked, it was 0.1%; booted and
         idle (slimmed), 0.2%.
       </P>
       <P>
-        The 213% was real when we measured it — idle iOS 26.5 sims burning
+        The 213% was real when we measured it, idle iOS 26.5 sims burning
         50–213% CPU each in <code>apsd</code> push-notification retry
         loops and <code>diagnosticd</code>, on the same OS and Xcode. But
         it is clearly environment-dependent (network conditions gate the
@@ -132,7 +130,7 @@ export default function Post() {
         so a parked sim costs ~0 CPU <em>no matter what</em>{" "}
         <code>apsd</code> is doing that day. During boot we did watch
         single sim daemons spike past 80% CPU each, so the worst case is
-        real — parking just makes it structurally impossible.
+        real, parking just makes it structurally impossible.
       </P>
 
       <H2>Run it yourself</H2>
@@ -157,14 +155,14 @@ cat eval/bench/out/bench.jsonl`}
         The harness is ~150 lines of shell plus a small Go protocol client
         (<code>eval/cmd/manzanas-bench</code>) that prints every sample and
         a p50/p90/p95 summary per phase. If your numbers disagree with
-        ours, we want to know — open an issue with your{" "}
+        ours, we want to know, open an issue with your{" "}
         <code>bench.jsonl</code> and hardware.
       </P>
 
       <H2>What&apos;s still janky</H2>
       <P>
         Things this benchmark exposed that we have not fixed: the 256 ms of
-        lease bookkeeping dominates the thaw path — every lease acquire
+        lease bookkeeping dominates the thaw path, every lease acquire
         shells out to <code>simctl list</code> to refresh the target table
         before granting, and that subprocess is most of the 256 ms. The
         SIGCONT is free; the bookkeeping is not.
@@ -173,8 +171,7 @@ cat eval/bench/out/bench.jsonl`}
         warm-pool churn under heavy lease turnover. Cold <code>observe</code>{" "}
         at ~0.9 s remains the slowest common action and is
         simulator-bound. And boot-to-<code>Booted</code> is a misleading
-        readiness signal for anything that wants to tap immediately —
-        thaw or <code>bootstatus</code> are the honest paths.
+        readiness signal for anything that wants to tap immediately, thaw or <code>bootstatus</code> are the honest paths.
       </P>
       <P>
         The README&apos;s numbers have been updated to match this run.

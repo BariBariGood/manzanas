@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Bar, FieldNote, H2, P, StatCard } from "../../../components/BlogKit";
 
 export const metadata: Metadata = {
-  title: "Field notes: optimizing the fleet — manzanas blog",
+  title: "Field notes: optimizing the fleet, manzanas blog",
   description:
     "Seven measured findings from optimizing the fleet: apsd retry loops, SIGSTOP parking, golden images that lost their slimming, boot storms, a 40ms link, a workstation that never throttles, and everything that landed since v0.1.",
 };
@@ -23,8 +23,8 @@ export default function Post() {
       <P>
         Idle iOS 26.5 simulators were burning 50–213% CPU each. The culprit
         was apsd stuck in a failing APNs connect-retry loop. Disabling apsd
-        and diagnosticd inside the sim took idle CPU to 1–6% — roughly 50x
-        less — and is what makes a warm pool affordable.
+        and diagnosticd inside the sim took idle CPU to 1–6%, roughly 50x
+        less, and is what makes a warm pool affordable.
       </P>
 
       <H2>Pause, don&apos;t reboot</H2>
@@ -32,7 +32,7 @@ export default function Post() {
         SIGSTOP a simulator&apos;s whole launchd_sim process tree and it
         parks at 0% CPU; SIGCONT thaws it in 26 ms on an M3 (~225 ms on
         Intel) with a cached PID list, vs 20 s–2 min boots. A 2 h 50 m park
-        thawed perfectly. Never run simctl against a parked sim — it hangs
+        thawed perfectly. Never run simctl against a parked sim, it hangs
         instead of erroring.
       </P>
 
@@ -41,7 +41,7 @@ export default function Post() {
         launchctl disable state lives outside the simulator data directory,
         so data-dir-swap stamping dropped all 141 disabled services and the
         sims booted effectively stock (~204 processes vs 77 slim). The fix:
-        boot, re-apply, and verify after every stamp and erase — 141/141
+        boot, re-apply, and verify after every stamp and erase, 141/141
         disables, 65 services vs ~330 stock, 4.6 s boot-to-ready.
       </P>
 
@@ -49,8 +49,7 @@ export default function Post() {
       <P>
         Every load catastrophe (load averages past 500 on 8 cores) was
         concurrent simulator boots, never steady-state work. Boots now go
-        through a semaphore — 1 at a time on Intel, 2 on Apple Silicon —
-        with a load gate at 2x core count and a 5 GiB free-disk gate.
+        through a semaphore, 1 at a time on Intel, 2 on Apple Silicon, with a load gate at 2x core count and a 5 GiB free-disk gate.
       </P>
 
       <H2>Designing for a 40 ms link</H2>
@@ -67,7 +66,7 @@ export default function Post() {
         A 2013 Mac Pro locks 92 W and 3.6 GHz on all cores indefinitely;
         2017 MacBook Pros hit their thermal wall in ~2 minutes, cap near
         30 W, and hold ~73% of starting speed. Clean build: 13 m 10 s vs
-        15 m 26 s and 16 m 31 s — and the gap widens on back-to-back CI
+        15 m 26 s and 16 m 31 s, and the gap widens on back-to-back CI
         builds.
       </P>
 

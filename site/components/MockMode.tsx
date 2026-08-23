@@ -4,7 +4,7 @@ import CopyBlock from "./CopyBlock";
 const CODE = `git clone https://github.com/BariBariGood/manzanas
 cd manzanas && make build
 
-# no Mac, no Xcode — a deterministic mock fleet:
+# no Mac, no Xcode, a deterministic mock fleet:
 ./bin/manzanasd --addr :7433 --mock
 
 # the full loop against a synthetic app screen:
@@ -36,7 +36,7 @@ export default function MockMode() {
           </h2>
           <p className="copy-secondary mx-auto mt-6 max-w-[620px] text-[19px] leading-relaxed">
             <code className="font-mono text-[16px]">--mock</code> runs the
-            daemon anywhere — Linux, CI, your laptop — with a full mock action
+            daemon anywhere, Linux, CI, your laptop, with a full mock action
             backend. The same lease → observe → tap → audit code an agent hits
             on a real Mac, against a deterministic synthetic app screen.
           </p>

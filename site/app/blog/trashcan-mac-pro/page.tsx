@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
-  title: "Adding a trashcan Mac Pro to the orchard — manzanas blog",
+  title: "Adding a trashcan Mac Pro to the orchard, manzanas blog",
   description:
     "Onboarding a 2013 Mac Pro 6,1 as a headless always-on CI and build box: self-hosted GitHub Actions runner today, OCLP to Sequoia and iOS simulators next.",
 };

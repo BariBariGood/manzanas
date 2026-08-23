@@ -12,21 +12,21 @@ const posts: {
     date: "August 23, 2026",
     title: "v0.7.0: teaching the agent to see",
     teaser:
-      "Element references now resolve through a four-layer ladder — accessibility tree, element map, template/NCC match, OCR last — and run-specs can carry deterministic asserts (visibility, touch targets, contrast) that fail loudly with annotated evidence instead of passing silently.",
+      "Element references now resolve through a four-layer ladder, accessibility tree, element map, template/NCC match, OCR last, and run-specs can carry deterministic asserts (visibility, touch targets, contrast) that fail loudly with annotated evidence instead of passing silently.",
   },
   {
     slug: "v0-5-0-one-call-runs",
     date: "August 11, 2026",
     title: "v0.5.0: one call from clean simulator to evidence",
     teaser:
-      "POST /v0/runs takes a declarative YAML run-spec and executes the whole agent loop — lease, boot, install, launch, steps, artifacts, release — with the lease always released and a PR-ready evidence export attached, even on failure.",
+      "POST /v0/runs takes a declarative YAML run-spec and executes the whole agent loop, lease, boot, install, launch, steps, artifacts, release, with the lease always released and a PR-ready evidence export attached, even on failure.",
   },
   {
     slug: "testing-ios-without-a-mac",
     date: "August 11, 2026",
     title: "Testing iOS apps without a Mac fleet: mock mode",
     teaser:
-      "manzanasd --mock runs the daemon on any Linux box with a full deterministic action backend — the real observe/tap/audit handlers against a synthetic app screen. A tutorial from raw HTTP to a one-call run with evidence.",
+      "manzanasd --mock runs the daemon on any Linux box with a full deterministic action backend, the real observe/tap/audit handlers against a synthetic app screen. A tutorial from raw HTTP to a one-call run with evidence.",
   },
   {
     slug: "why-agents-need-simulator-leases",
@@ -41,7 +41,7 @@ const posts: {
     title: "Field notes: real devices, a smarter broker, video",
     fieldNote: true,
     teaser:
-      "Wave 3 in one day — 79 files, +6,808 lines: physical iPhones as leasable targets (devicectl + WebDriverAgent), warm-first broker placement on daemon-truth load, an embedded /dash dashboard, per-lease video capture, and a Go 1.22 toolchain quietly shipping binaries that crash on macOS 26.",
+      "Wave 3 in one day, 79 files, +6,808 lines: physical iPhones as leasable targets (devicectl + WebDriverAgent), warm-first broker placement on daemon-truth load, an embedded /dash dashboard, per-lease video capture, and a Go 1.22 toolchain quietly shipping binaries that crash on macOS 26.",
   },
   {
     slug: "field-notes-aug-2",

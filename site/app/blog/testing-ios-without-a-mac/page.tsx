@@ -3,9 +3,9 @@ import { H2, P } from "../../../components/BlogKit";
 import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
-  title: "Testing iOS apps without a Mac fleet: mock mode — manzanas blog",
+  title: "Testing iOS apps without a Mac fleet: mock mode, manzanas blog",
   description:
-    "A tutorial: run manzanasd --mock on any Linux box and drive the full agent loop — lease, observe, tap_element, type, wait_for_element, audit, screenshot — against a deterministic synthetic app screen, then wrap it all in one runs-API call.",
+    "A tutorial: run manzanasd --mock on any Linux box and drive the full agent loop, lease, observe, tap_element, type, wait_for_element, audit, screenshot, against a deterministic synthetic app screen, then wrap it all in one runs-API call.",
 };
 
 const START = `git clone https://github.com/BariBariGood/manzanas
@@ -67,7 +67,7 @@ export default function Post() {
       <P>
         Most of the code in an agent-drives-a-simulator pipeline isn&apos;t
         macOS code. It&apos;s leases, queues, action payloads, wait loops,
-        journal exports — protocol and logic. But testing any of it used to
+        journal exports, protocol and logic. But testing any of it used to
         require a Mac with Xcode, which means CI needs Mac runners and
         contributors on Linux can&apos;t run anything at all. v0.5.0&apos;s{" "}
         <code className="font-mono text-[14px]">--mock</code> fixes that: the
@@ -86,23 +86,21 @@ export default function Post() {
         every one of them renders the same synthetic app: a 390×844 login
         screen with a username field, a password field, a Wi-Fi switch, a
         Sign In button, and a footer that starts below the fold so scrolling
-        is real. State transitions are synchronous and deterministic —
-        repeated runs produce identical trees, hashes, and screenshots.
+        is real. State transitions are synchronous and deterministic, repeated runs produce identical trees, hashes, and screenshots.
       </P>
 
       <H2>Drive the full loop</H2>
       <P>
-        This is the same wire protocol an agent uses against a real Mac —
-        lease, boot, batch of actions, release:
+        This is the same wire protocol an agent uses against a real Mac, lease, boot, batch of actions, release:
       </P>
       <div className="mt-6">
         <CopyBlock code={LOOP} label="the raw-HTTP version" />
       </div>
       <P>
         The interesting part is what&apos;s <em>not</em> mocked. The action
-        pipeline reuses the production backend handlers — observe compaction,
+        pipeline reuses the production backend handlers, observe compaction,
         the predicate/matcher DSL, wait loops, composite element actions,
-        batches, audit checks, screenshot transcoding — with only the
+        batches, audit checks, screenshot transcoding, with only the
         simulator process boundary replaced by an in-process synthetic app.
         The <code className="font-mono text-[14px]">audit</code> step runs the
         real checks over the synthetic tree and returns findings with an
@@ -123,7 +121,7 @@ export default function Post() {
       </div>
       <P>
         <code className="font-mono text-[14px]">evidence.md</code> is the
-        journal&apos;s PR-ready markdown export — steps, tree hashes, the
+        journal&apos;s PR-ready markdown export, steps, tree hashes, the
         audit findings, the screenshots. Since mock screenshots are rendered
         from the synthetic tree, the pixels match the accessibility tree
         byte-for-byte on every run, which makes it a nice fixture for testing
@@ -134,11 +132,11 @@ export default function Post() {
       <P>
         I use mock mode for three things: CI for the daemon and clients on
         Linux runners; developing agent prompts and run-specs without burning
-        a real simulator lease; and demos — the entire quickstart on this
+        a real simulator lease; and demos, the entire quickstart on this
         site works on a $5 VPS. What it is <em>not</em> for is performance
         numbers (mock latency is near-zero; use a real host and{" "}
         <code className="font-mono text-[14px]">make bench</code>) or testing
-        your actual app — there is one fixed synthetic screen, and{" "}
+        your actual app, there is one fixed synthetic screen, and{" "}
         <code className="font-mono text-[14px]">launch_app</code> resets it
         whatever bundle ID you pass. When you outgrow it, point the same
         specs at a real daemon and nothing else changes. Details in{" "}

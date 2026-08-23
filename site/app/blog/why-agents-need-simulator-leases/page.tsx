@@ -3,7 +3,7 @@ import { Bar, H2, P, StatCard } from "../../../components/BlogKit";
 import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
-  title: "Why agents need simulator leases — manzanas blog",
+  title: "Why agents need simulator leases, manzanas blog",
   description:
     "Two agents on one Mac will boot each other's simulators and type into the wrong window. Why I built leases instead of locks: TTL-bounded exclusive claims, FIFO queues, park/thaw warm pools, golden images, and the design philosophy behind manzanasd.",
 };
@@ -56,7 +56,7 @@ export default function Post() {
         TTL-bounded: if the agent dies, the claim expires and the simulator
         returns to the pool by itself. It is queued: a busy target means a
         FIFO position, not a spin loop. And it is granted by the one process
-        that actually owns the state — a daemon on the Mac — so it works for
+        that actually owns the state, a daemon on the Mac, so it works for
         N agents on N machines:
       </P>
       <div className="mt-6">
@@ -74,9 +74,9 @@ export default function Post() {
         Leases only work if losing one is cheap. If a fresh simulator costs a
         cold boot, agents hoard leases forever and you&apos;re back to locks
         with extra steps. So the daemon keeps a <strong>warm pool</strong>:
-        idle sims are parked with SIGSTOP — a stopped process tree is
+        idle sims are parked with SIGSTOP, a stopped process tree is
         unschedulable, so a parked sim costs ~0 host CPU no matter what its
-        daemons want to do — and thawed with SIGCONT on lease grant.
+        daemons want to do, and thawed with SIGCONT on lease grant.
       </P>
       <div className="mt-6 space-y-4">
         <StatCard title="Lease to live simulator" note="M3, macOS 26">
@@ -94,8 +94,8 @@ export default function Post() {
       <H2>Determinism closes the loop</H2>
       <P>
         The last piece is what the next agent inherits. A lease can declare a{" "}
-        <code className="font-mono text-[14px]">reset</code> — erase, or
-        restore a named snapshot — applied automatically at release. Golden
+        <code className="font-mono text-[14px]">reset</code>, erase, or
+        restore a named snapshot, applied automatically at release. Golden
         images stamp out slimmed sims (~0.75 GB vs ~5 GB stock) in seconds,
         so &quot;a clean iPhone 17 Pro with the app installed and a logged-in
         account&quot; is a starting state, not a 10-minute setup script.
@@ -108,14 +108,13 @@ export default function Post() {
         lives in the daemon; clients stay thin.</strong> Agents are terrible
         at distributed coordination and great at making API calls, so the
         coordination problem should live in one process per Mac that owns
-        the registry, the lease table, the warm pool, and the journal — and
+        the registry, the lease table, the warm pool, and the journal, and
         the agents should just ask. It&apos;s the same reason databases have
         servers instead of every client fencing over the same files on an
         NFS mount.
       </P>
       <P>
-        And because the referee sees every mutating op, it can journal them —
-        who held the lease, what they did, what the screen looked like. Once
+        And because the referee sees every mutating op, it can journal them, who held the lease, what they did, what the screen looked like. Once
         no two agents can trip over each other, the evidence of what each one
         did is suddenly trustworthy. That journal became the run primitive in{" "}
         <a className="underline" href="/blog/v0-5-0-one-call-runs">

@@ -14,13 +14,13 @@ export default function Pillars() {
 
         {/* Bento grid */}
         <div className="mt-12 grid gap-5 lg:grid-cols-3">
-          {/* Leases — large tile */}
+          {/* Leases, large tile */}
           <Reveal className="lg:col-span-2">
             <div className="tile tile-hover flex h-full flex-col justify-between overflow-hidden p-8 sm:p-12">
               <div className="max-w-[440px]">
                 <h3 className="headline text-[28px] sm:text-[32px]">Leases</h3>
                 <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
-                  Ask for a simulator; get it — or a place in line. When a
+                  Ask for a simulator; get it, or a place in line. When a
                   lease expires, the next agent takes over.
                 </p>
               </div>
@@ -104,7 +104,7 @@ export default function Pillars() {
             <div className="tile tile-hover flex h-full flex-col p-8 sm:p-10">
               <h3 className="headline text-[28px]">Evidence journal</h3>
               <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
-                Every action is recorded with proof — what changed,
+                Every action is recorded with proof, what changed,
                 screenshots included.
               </p>
               <div className="mt-auto space-y-1.5 pt-8 font-mono text-[11px] text-[#6e6e73]">
@@ -121,8 +121,7 @@ export default function Pillars() {
             <div className="tile tile-hover flex h-full flex-col p-8 sm:p-10">
               <h3 className="headline text-[28px]">MCP-native</h3>
               <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
-                One command — <code className="font-mono text-[14px]">manzanas mcp</code> —
-                turns the fleet into MCP tools for any agent.
+                One command, <code className="font-mono text-[14px]">manzanas mcp</code>, turns the fleet into MCP tools for any agent.
               </p>
               <div className="mt-auto rounded-xl bg-[#f5f5f7] p-4 pt-3 font-mono text-[11px] leading-relaxed text-[#6e6e73]">
                 <p className="text-[#424245]">→ tools/call lease_acquire</p>
@@ -139,7 +138,7 @@ export default function Pillars() {
                 <p className="copy-secondary mt-3 text-[17px] leading-relaxed">
                   Every daemon serves its own dashboard at{" "}
                   <code className="font-mono text-[14px]">/dash</code>; the
-                  broker serves one aggregating the whole fleet — targets,
+                  broker serves one aggregating the whole fleet, targets,
                   leases, live multiview, and the journal browser. Embedded in
                   the binary, nothing to install.
                 </p>
@@ -190,8 +189,7 @@ export default function Pillars() {
               Sims and devices. One API.
             </p>
             <p className="copy-secondary mt-2 text-[16px] leading-relaxed">
-              Simulators and physical iPhones (devicectl + WebDriverAgent) —
-              same API. Every binary reports its build version, and an
+              Simulators and physical iPhones (devicectl + WebDriverAgent), same API. Every binary reports its build version, and an
               optional shared bearer token (<code className="font-mono text-[13px]">--auth-token</code>)
               gates the whole surface.
             </p>

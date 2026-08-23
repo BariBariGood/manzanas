@@ -11,8 +11,7 @@ export default function Streaming() {
             <span className="phrase-gray">Live, in any browser.</span>
           </h2>
           <p className="copy-secondary mx-auto mt-6 max-w-[620px] text-[19px] leading-relaxed">
-            Open a stream on any leased simulator and watch it live —
-            while the agent keeps working.
+            Open a stream on any leased simulator and watch it live, while the agent keeps working.
           </p>
         </Reveal>
 
@@ -58,7 +57,7 @@ function ViewerMock() {
           </div>
         </div>
 
-        {/* info panel — visible at every width */}
+        {/* info panel, visible at every width */}
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-4">
           <div className="flex items-center gap-2 font-mono text-[12px] text-white/80">
             <span className="pulse-dot h-2 w-2 rounded-full bg-red-500" />

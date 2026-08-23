@@ -31,7 +31,7 @@ run run_1a2b3c4d5e6f7a8b: passed
   step 5 audit: ok · 0 findings
 
 # evidence.md is the journal's PR-ready
-# markdown export — paste it into a PR.`;
+# markdown export, paste it into a PR.`;
 
 export default function Runs() {
   return (
@@ -50,7 +50,7 @@ export default function Runs() {
             A <strong>run</strong> executes the whole agent loop from a single
             request: acquire lease → boot → fixtures → install → launch →
             steps → artifacts → release. Declare it once in YAML; the daemon
-            owns the choreography — and the lease is always released, whatever
+            owns the choreography, and the lease is always released, whatever
             fails.
           </p>
         </Reveal>

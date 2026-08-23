@@ -44,7 +44,7 @@ export default function Hero() {
             href="/blog/v0-5-0-one-call-runs"
             className="rounded-full border border-[#c22214]/20 bg-[#c22214]/[0.06] px-3.5 py-1 font-mono text-[12px] font-semibold text-[#c22214] transition-colors hover:bg-[#c22214]/[0.12]"
           >
-            v0.5.0 — one-call runs · YAML specs · mock mode →
+            v0.5.0, one-call runs · YAML specs · mock mode →
           </a>
         </motion.div>
 
@@ -61,7 +61,7 @@ export default function Hero() {
           className="copy-secondary mx-auto mt-6 max-w-[560px] text-[18px] leading-relaxed sm:text-[20px]"
         >
           One daemon per Mac. Your AI agents share its simulators
-          without stepping on each other — and one call runs the whole
+          without stepping on each other, and one call runs the whole
           loop, from clean simulator to evidence.
         </motion.p>
 
@@ -133,7 +133,7 @@ function FilmCard() {
         <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
         <span className="h-3 w-3 rounded-full bg-[#28c840]" />
         <span className="ml-3 font-mono text-xs text-[#6e6e73]">
-          manzanas — launch film
+          manzanas, launch film
         </span>
       </div>
       <video

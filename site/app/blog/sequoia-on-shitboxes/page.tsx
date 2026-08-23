@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import CopyBlock from "../../../components/CopyBlock";
 
 export const metadata: Metadata = {
-  title: "Growing an orchard out of two $250 shitboxes — manzanas blog",
+  title: "Growing an orchard out of two $250 shitboxes, manzanas blog",
   description:
     "Putting macOS Sequoia on unsupported 2017 MacBook Pros with OpenCore Legacy Patcher, wiring them into a Tailscale tailnet, and turning them into a simulator farm.",
 };
