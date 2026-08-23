@@ -1,6 +1,6 @@
 {
   "name": "manzanasd-client",
-  "version": "0.2.0",
+  "version": "0.7.0",
   "description": "Thin npm wrapper for the manzanas CLI: downloads the right release binary on install and proxies to it.",
   "license": "Apache-2.0",
   "repository": {
