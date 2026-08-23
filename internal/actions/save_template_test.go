@@ -17,9 +17,9 @@ func TestSaveTemplateSpecFromPayload(t *testing.T) {
 	}
 
 	bad := []map[string]any{
-		{"rect": rect(0, 0, 1, 1)},                // no name
-		{"name": "a@b", "rect": rect(0, 0, 1, 1)}, // bad name
-		{"name": "n"}, // no rect
+		{"rect": rect(0, 0, 1, 1)},                                  // no name
+		{"name": "a@b", "rect": rect(0, 0, 1, 1)},                   // bad name
+		{"name": "n"},                                               // no rect
 		{"name": "n", "rect": rect(0.5, 0, 1, 1)},                   // non-integer
 		{"name": "n", "rect": rect(-1, 0, 1, 1)},                    // negative
 		{"name": "n", "rect": rect(0, 0, 0, 1)},                     // zero w
