@@ -12,9 +12,9 @@ import (
 	"github.com/BariBariGood/manzanas/proto"
 )
 
-// cmdLease implements `manzanas lease acquire|wait|renew|release|ls`.
+// cmdLease implements `manzanas lease acquire|wait|renew|pause|resume|release|ls`.
 func cmdLease(ctx context.Context, app *appEnv, args []string) error {
-	sub, err := requireArg(args, 0, "lease subcommand (acquire|wait|renew|release|ls)")
+	sub, err := requireArg(args, 0, "lease subcommand (acquire|wait|renew|pause|resume|release|ls)")
 	if err != nil {
 		return err
 	}
@@ -25,6 +25,10 @@ func cmdLease(ctx context.Context, app *appEnv, args []string) error {
 		return leaseWait(ctx, app, args[1:])
 	case "renew":
 		return leaseRenew(ctx, app, args[1:])
+	case "pause":
+		return leasePause(ctx, app, args[1:])
+	case "resume":
+		return leaseResume(ctx, app, args[1:])
 	case "release":
 		return leaseRelease(ctx, app, args[1:])
 	case "ls":
@@ -128,6 +132,42 @@ func leaseRenew(ctx context.Context, app *appEnv, args []string) error {
 	return app.emit(l, func(w io.Writer) { printLease(w, l) })
 }
 
+// leasePause maps to POST /v0/leases/{id}/pause: block action dispatch on
+// the lease (a human took over the device) until `lease resume`.
+func leasePause(ctx context.Context, app *appEnv, args []string) error {
+	id, err := requireArg(args, 0, "lease ID")
+	if err != nil {
+		return err
+	}
+	fs := app.newFlagSet("lease pause")
+	reason := fs.String("reason", "", "freeform pause reason, e.g. human-present")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	l, err := app.client.PauseLease(ctx, id, *reason)
+	if err != nil {
+		return err
+	}
+	return app.emit(l, func(w io.Writer) { printLease(w, l) })
+}
+
+// leaseResume maps to POST /v0/leases/{id}/resume, unblocking actions.
+func leaseResume(ctx context.Context, app *appEnv, args []string) error {
+	id, err := requireArg(args, 0, "lease ID")
+	if err != nil {
+		return err
+	}
+	fs := app.newFlagSet("lease resume")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	l, err := app.client.ResumeLease(ctx, id)
+	if err != nil {
+		return err
+	}
+	return app.emit(l, func(w io.Writer) { printLease(w, l) })
+}
+
 func leaseRelease(ctx context.Context, app *appEnv, args []string) error {
 	id, err := requireArg(args, 0, "lease ID")
 	if err != nil {
@@ -161,8 +201,12 @@ func leaseLs(ctx context.Context, app *appEnv, args []string) error {
 			if l.ExpiresAt != nil {
 				exp = l.ExpiresAt.Format(time.RFC3339)
 			}
+			state := string(l.State)
+			if l.Paused {
+				state += " (paused)"
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-				l.ID, l.State, l.TargetUDID, l.AgentID, strings.Join(l.Labels, ","), exp)
+				l.ID, state, l.TargetUDID, l.AgentID, strings.Join(l.Labels, ","), exp)
 		}
 		tw.Flush()
 	})
@@ -175,8 +219,15 @@ func printLease(w io.Writer, l proto.Lease) {
 		if l.ExpiresAt != nil {
 			exp = l.ExpiresAt.Format(time.RFC3339)
 		}
-		fmt.Fprintf(w, "lease %s active on %s (ttl %ds, expires %s)\n",
-			l.ID, l.TargetUDID, l.TTLSeconds, exp)
+		paused := ""
+		if l.Paused {
+			paused = ", paused"
+			if l.PausedReason != "" {
+				paused += ": " + l.PausedReason
+			}
+		}
+		fmt.Fprintf(w, "lease %s active on %s (ttl %ds, expires %s%s)\n",
+			l.ID, l.TargetUDID, l.TTLSeconds, exp, paused)
 	case proto.LeaseQueued:
 		fmt.Fprintf(w, "lease %s queued at position %d (run `manzanas lease wait %s` to hold your place until it's granted)\n",
 			l.ID, l.QueuePosition, l.ID)

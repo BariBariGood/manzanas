@@ -624,6 +624,69 @@ func (m *Manager) Renew(id string, ttlSeconds int) (proto.Lease, error) {
 	return m.viewLocked(*l), nil
 }
 
+// Pause marks an active lease as paused for human preemption: action
+// dispatch on the lease is blocked (the server gate) until Resume. Pause
+// does not stop the TTL clock — the holder must keep renewing (the grace
+// window still applies), so an abandoned pause can never hold a target
+// forever. Pausing an already-paused lease keeps the original paused_at
+// and only updates the reason when a non-empty one is given.
+func (m *Manager) Pause(id, reason string) (proto.Lease, error) {
+	m.mu.Lock()
+	pending := m.expireLocked()
+	defer func() {
+		resets := m.takeResetsLocked()
+		m.mu.Unlock()
+		m.emit(pending)
+		m.startResets(resets)
+	}()
+	l, ok := m.leases[id]
+	if !ok {
+		return proto.Lease{}, ErrNotFound
+	}
+	if l.State != proto.LeaseActive {
+		return *l, ErrNotActive
+	}
+	if !l.Paused {
+		l.Paused = true
+		at := m.now()
+		l.PausedAt = &at
+	}
+	if reason != "" {
+		l.PausedReason = reason
+	}
+	return m.viewLocked(*l), nil
+}
+
+// Resume clears a lease's pause, unblocking action dispatch. Resuming an
+// active lease that is not paused is a no-op success.
+func (m *Manager) Resume(id string) (proto.Lease, error) {
+	m.mu.Lock()
+	pending := m.expireLocked()
+	defer func() {
+		resets := m.takeResetsLocked()
+		m.mu.Unlock()
+		m.emit(pending)
+		m.startResets(resets)
+	}()
+	l, ok := m.leases[id]
+	if !ok {
+		return proto.Lease{}, ErrNotFound
+	}
+	if l.State != proto.LeaseActive {
+		return *l, ErrNotActive
+	}
+	clearPause(l)
+	return m.viewLocked(*l), nil
+}
+
+// clearPause strips a lease's pause marker (on resume and on any
+// transition out of active, so terminal leases never read as paused).
+func clearPause(l *proto.Lease) {
+	l.Paused = false
+	l.PausedAt = nil
+	l.PausedReason = ""
+}
+
 // Release ends a lease (active or queued) and promotes the next queued
 // lease that matches the freed target.
 func (m *Manager) Release(ctx context.Context, id string) (proto.Lease, error) {
@@ -641,6 +704,7 @@ func (m *Manager) Release(ctx context.Context, id string) (proto.Lease, error) {
 	switch l.State {
 	case proto.LeaseActive:
 		delete(m.byTarget, l.TargetUDID)
+		clearPause(l)
 		l.State = proto.LeaseReleased
 		m.terminalAt[l.ID] = m.now()
 		if m.needsResetLocked(l) {
@@ -752,6 +816,7 @@ func (m *Manager) expireLocked() []proto.Lease {
 			}
 		}
 		delete(m.byTarget, l.TargetUDID)
+		clearPause(l)
 		l.State = proto.LeaseExpired
 		m.terminalAt[l.ID] = now
 		events = append(events, *l)

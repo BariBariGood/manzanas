@@ -52,6 +52,37 @@ func TestWarmTapUsesHelperNotCold(t *testing.T) {
 	}
 }
 
+// A tap carrying duration_ms routes to the cold handler (whose
+// dispatchHID still prefers the resident helper's long_press op); an
+// invalid duration fails before any dispatch.
+func TestWarmTapDurationRoutesCold(t *testing.T) {
+	ff := &fakeFactory{}
+	cold := &coldFake{}
+	b := warmFor(t, ff, cold)
+
+	res, err := b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "tap", Payload: map[string]any{"x": 10, "y": 20, "duration_ms": 500}})
+	if err != nil {
+		t.Fatalf("long-press tap: %v", err)
+	}
+	if res.Result["cold"] != true {
+		t.Fatalf("expected cold result, got %+v", res)
+	}
+	if len(cold.kinds) != 1 || cold.kinds[0] != "tap" {
+		t.Fatalf("cold dispatches: %v", cold.kinds)
+	}
+
+	_, err = b.Dispatch(context.Background(), "U1",
+		proto.ActionRequest{Kind: "tap", Payload: map[string]any{"x": 10, "y": 20, "duration_ms": 0}})
+	var ae *Error
+	if !errors.As(err, &ae) || ae.Code != proto.ErrBadRequest {
+		t.Fatalf("want bad_request for zero duration, got %v", err)
+	}
+	if len(cold.kinds) != 1 {
+		t.Fatalf("invalid duration must not be dispatched cold: %v", cold.kinds)
+	}
+}
+
 func TestWarmFallsBackColdWhenHelperUnavailable(t *testing.T) {
 	ff := &fakeFactory{spawnErrs: 99}
 	cold := &coldFake{}

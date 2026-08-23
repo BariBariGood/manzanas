@@ -37,12 +37,30 @@ type Manager struct {
 	// discards its session and restart-recovery state, so an unchanged
 	// config must keep the existing client.
 	wired map[string]proto.DeviceWDAConfig
-	// wiredMirror tracks the socket each device's current mirror client
-	// in the backend was built from (at most one: the mirror is exclusive
-	// global state). Rewiring replaces the client — and the mutex that
-	// serializes gestures on the exclusive mirror window — so an
-	// unchanged socket must keep the existing client.
-	wiredMirror map[string]string
+	// wiredMirror tracks the socket and input opt-in each device's
+	// current mirror client in the backend was built from (at most one:
+	// the mirror is exclusive global state). Rewiring replaces the
+	// client — and the mutex that serializes gestures on the exclusive
+	// mirror window — so an unchanged wiring must keep the existing
+	// client.
+	wiredMirror map[string]mirrorWiring
+	// publishMirrors, when set, receives the effective mirror set
+	// (udid -> mirrord socket) on every Apply so the registry layer can
+	// enumerate mirror-backed devices. A callback for the same reason
+	// setEnabled is one: the registry wiring lives in main, and devices
+	// importing registry would cycle.
+	publishMirrors func(mirrors map[string]string)
+	// mirrorKnown, when set, reports whether the device registry
+	// (devicectl) enumerates a UDID; Apply warns loudly about mirror
+	// UDIDs it does not (app-lifecycle actions will fail on them).
+	mirrorKnown func(ctx context.Context, udid string) bool
+}
+
+// mirrorWiring is one mirror-backed device's effective backend wiring:
+// the mirrord socket and whether mutating (input) actions are allowed.
+type mirrorWiring struct {
+	socket     string
+	allowInput bool
 }
 
 // deviceSup is one device's running supervision: the runner and/or
@@ -61,7 +79,21 @@ func NewManager(backend *actions.DeviceBackend, setEnabled func(enabled bool, de
 		log = slog.Default()
 	}
 	return &Manager{log: log, backend: backend, setEnabled: setEnabled,
-		sups: map[string]*deviceSup{}, wired: map[string]proto.DeviceWDAConfig{}, wiredMirror: map[string]string{}}
+		sups: map[string]*deviceSup{}, wired: map[string]proto.DeviceWDAConfig{}, wiredMirror: map[string]mirrorWiring{}}
+}
+
+// SetMirrorPublisher registers the registry-layer hook that receives the
+// effective mirror set (udid -> mirrord socket) on every Apply. Set once
+// at wiring time, before the first Apply.
+func (m *Manager) SetMirrorPublisher(pub func(mirrors map[string]string)) {
+	m.publishMirrors = pub
+}
+
+// SetMirrorKnownCheck registers the probe Apply uses to warn about
+// configured mirror UDIDs that devicectl does not enumerate. Set once at
+// wiring time, before the first Apply.
+func (m *Manager) SetMirrorKnownCheck(check func(ctx context.Context, udid string) bool) {
+	m.mirrorKnown = check
 }
 
 // Current returns the last applied config (deep-copied).
@@ -112,6 +144,22 @@ func (m *Manager) Apply(cfg proto.DevicesConfig) error {
 		}
 		delete(m.sups, udid)
 	}
+	// The effective mirror set (udid -> socket) drives both the backend
+	// wiring below and the registry publish hook.
+	mirrors := map[string]string{}
+	wirings := map[string]mirrorWiring{}
+	for udid, d := range effectiveMirror {
+		socket := d.Socket
+		if socket == "" {
+			socket = DefaultMirrorSocket()
+		}
+		mirrors[udid] = socket
+		wirings[udid] = mirrorWiring{socket: socket, allowInput: d.AllowInput}
+		if !d.AllowInput {
+			m.log.Warn("mirror device is read-only: allow_input is not set, so input actions (tap/swipe/scroll/type/button and element composites) return forbidden; set allow_input=true in the devices config (or --device-mirror-allow-input) to enable input",
+				"udid", udid)
+		}
+	}
 	if m.backend != nil {
 		for udid := range m.wired {
 			if _, ok := effective[udid]; !ok {
@@ -122,23 +170,31 @@ func (m *Manager) Apply(cfg proto.DevicesConfig) error {
 		}
 		for udid := range m.wiredMirror {
 			if _, ok := effectiveMirror[udid]; !ok {
-				m.backend.SetMirror(udid, "")
+				m.backend.SetMirror(udid, "", false)
 				delete(m.wiredMirror, udid)
 				m.log.Info("device mirror backend removed", "udid", udid)
 			}
 		}
-		for udid, d := range effectiveMirror {
-			socket := d.Socket
-			if socket == "" {
-				socket = DefaultMirrorSocket()
-			}
-			if old, ok := m.wiredMirror[udid]; ok && old == socket {
+		for udid, w := range wirings {
+			if old, ok := m.wiredMirror[udid]; ok && old == w {
 				continue // unchanged, client keeps running
 			}
-			m.backend.SetMirror(udid, socket)
-			m.wiredMirror[udid] = socket
-			m.log.Info("device mirror backend configured", "udid", udid, "socket", socket)
+			m.backend.SetMirror(udid, w.socket, w.allowInput)
+			m.wiredMirror[udid] = w
+			m.log.Info("device mirror backend configured", "udid", udid, "socket", w.socket, "allow_input", w.allowInput)
 		}
+	}
+	if m.publishMirrors != nil {
+		m.publishMirrors(mirrors)
+	}
+	if m.mirrorKnown != nil && len(mirrors) > 0 {
+		// devicectl lookups shell out (up to ~20s): warn off the Apply
+		// path so a slow CoreDevice cannot stall config changes.
+		udids := make([]string, 0, len(mirrors))
+		for u := range mirrors {
+			udids = append(udids, u)
+		}
+		go m.warnUnknownMirrors(udids)
 	}
 	for _, udid := range UDIDs(proto.DevicesConfig{WDA: effective}) {
 		d := effective[udid]
@@ -168,6 +224,22 @@ func (m *Manager) Apply(cfg proto.DevicesConfig) error {
 	m.curMu.Unlock()
 	m.setEnabled(cfg.Enabled, UDIDs(cfg))
 	return nil
+}
+
+// warnUnknownMirrors warns loudly about configured mirror UDIDs that
+// devicectl does not enumerate: the target is still synthesized by the
+// mirror registry (labeled "no-devicectl"), but install_app /
+// launch_app / terminate_app route through devicectl and will fail.
+func (m *Manager) warnUnknownMirrors(udids []string) {
+	for _, udid := range udids {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		known := m.mirrorKnown(ctx, udid)
+		cancel()
+		if !known {
+			m.log.Warn("mirror device is not enumerated by devicectl: the target is synthesized from the mirror config (label no-devicectl); install_app/launch_app/terminate_app will fail until the device is paired with this Mac",
+				"udid", udid)
+		}
+	}
 }
 
 // startSupervisors starts the runner and/or forward supervisors for one

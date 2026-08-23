@@ -1,5 +1,8 @@
 # Fleet operations: multi-Mac onboarding
 
+*Who this is for: operators standing up more than one Mac. Single-Mac
+users can stop at [quickstart.md](quickstart.md).*
+
 How to run `manzanasd` across a fleet of Macs so multiple agents (humans,
 CI, AI sessions) can share simulators safely.
 

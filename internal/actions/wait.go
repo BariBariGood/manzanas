@@ -101,6 +101,9 @@ func (b *AXeBackend) observeOnce(ctx context.Context, udid string, refresh bool)
 		obs, err := b.warmObserve(ctx, udid)
 		var te *TransportError
 		if !errors.As(err, &te) {
+			if err == nil {
+				b.noteViewport(udid, obs.viewport)
+			}
 			return obs, err
 		}
 		// Warm helper unavailable: run this poll cold.
@@ -119,5 +122,26 @@ func (b *AXeBackend) observeOnce(ctx context.Context, udid string, refresh bool)
 		// wait's own timeout bounds a legitimately element-free screen.
 		return observation{}, errNotYet
 	}
-	return observation{nodes: nodes, viewport: rawViewport(raw)}, nil
+	obs := observation{nodes: nodes, viewport: rawViewport(raw)}
+	b.noteViewport(udid, obs.viewport)
+	return obs, nil
+}
+
+// noteViewport caches a UDID's observed viewport width for later
+// capture-pixel → tap-point scaling without a fresh a11y snapshot.
+func (b *AXeBackend) noteViewport(udid string, v *Frame) {
+	if v == nil || v.W <= 0 {
+		return
+	}
+	b.viewMu.Lock()
+	b.viewports[udid] = v.W
+	b.viewMu.Unlock()
+}
+
+// cachedViewportWidth returns the last observed viewport width for a
+// UDID, 0 when the target was never observed with a viewport.
+func (b *AXeBackend) cachedViewportWidth(udid string) float64 {
+	b.viewMu.RLock()
+	defer b.viewMu.RUnlock()
+	return b.viewports[udid]
 }

@@ -54,6 +54,32 @@ func newFakeDaemon(t *testing.T) *fakeDaemon {
 		d.leases[l.ID] = l
 		writeOK(w, l)
 	})
+	mux.HandleFunc("POST /v0/leases/{id}/pause", func(w http.ResponseWriter, r *http.Request) {
+		d.requests.Add(1)
+		l, ok := d.leases[r.PathValue("id")]
+		if !ok {
+			writeErr(w, http.StatusNotFound, proto.ErrNotFound, "lease not found")
+			return
+		}
+		var req proto.PauseLeaseRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		l.Paused = true
+		l.PausedReason = req.Reason
+		d.leases[l.ID] = l
+		writeOK(w, l)
+	})
+	mux.HandleFunc("POST /v0/leases/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
+		d.requests.Add(1)
+		l, ok := d.leases[r.PathValue("id")]
+		if !ok {
+			writeErr(w, http.StatusNotFound, proto.ErrNotFound, "lease not found")
+			return
+		}
+		l.Paused = false
+		l.PausedReason = ""
+		d.leases[l.ID] = l
+		writeOK(w, l)
+	})
 	mux.HandleFunc("GET /v0/journal/{id}", func(w http.ResponseWriter, r *http.Request) {
 		d.requests.Add(1)
 		if _, ok := d.leases[r.PathValue("id")]; !ok {
@@ -196,6 +222,38 @@ func TestReleaseFallsBackToDaemonWhenBrokerDown(t *testing.T) {
 	}
 	if rel.State != proto.LeaseReleased {
 		t.Fatalf("state = %q, want released", rel.State)
+	}
+}
+
+// Brokers don't serve /pause or /resume: a fresh CLI process pointed at
+// a broker must recover from the route miss by resolving the lease's
+// host_addr and retrying against the owning daemon.
+func TestPauseResumeThroughBrokerFromColdRouteCache(t *testing.T) {
+	d := newFakeDaemon(t)
+	b := newFakeBroker(t, d)
+	d.leases["lse_prior"] = proto.Lease{ID: "lse_prior", State: proto.LeaseActive}
+	ctx := context.Background()
+
+	c := New(b.srv.URL)
+	p, err := c.PauseLease(ctx, "lse_prior", "human-present")
+	if err != nil {
+		t.Fatalf("pause through broker: %v", err)
+	}
+	if !p.Paused || p.PausedReason != "human-present" {
+		t.Fatalf("paused = %+v", p)
+	}
+	if got := c.AddrForLease("lse_prior"); got != d.srv.URL {
+		t.Fatalf("AddrForLease = %q, want %q", got, d.srv.URL)
+	}
+
+	// A second fresh process resumes the same way.
+	c2 := New(b.srv.URL)
+	res, err := c2.ResumeLease(ctx, "lse_prior")
+	if err != nil {
+		t.Fatalf("resume through broker: %v", err)
+	}
+	if res.Paused {
+		t.Fatalf("resumed = %+v", res)
 	}
 }
 

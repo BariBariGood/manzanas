@@ -19,12 +19,16 @@ truth; this document describes semantics.
 - All paths are prefixed with the protocol version: `/v0/...`.
 - Errors: non-2xx HTTP responses (and WS `error` fields) carry
   `{"code": "...", "message": "..."}`. Well-known codes: `not_found`,
-  `not_implemented`, `bad_request`, `lease_expired`, `no_match`,
+  `not_implemented`, `bad_request`, `lease_expired`, `lease_paused`
+  (`409` — the lease is paused for human preemption; only read-only
+  observation is dispatchable until it is resumed), `no_match`,
   `target_busy`, `target_not_booted`, `stream_limit`, `viewer_limit`,
   `stream_gone`, `timeout`, `off_viewport`, `ambiguous_match` (`409` — a
   structured predicate matched several elements and no `index` picked
   one; the message lists the candidates), `focus_required` (`412` — a
   typing action with `require_focus:true` found no focused text field),
+  `assertion_failed` (`417` — an `assert_*` action's postcondition was
+  observed to be false within its retry budget),
   `unauthorized` (`401` — the daemon/broker runs with `--auth-token` and
   the request carried a missing or wrong bearer token),
   `internal`. Two additive
@@ -69,6 +73,26 @@ truth; this document describes semantics.
   carries `pool_advice` (`PoolAdviceState`: `source`, `received_at`,
   `window_seconds`, `classes`). Additive: schedulers must tolerate older
   daemons answering `404`.
+- `GET /v0/doctor` returns the daemon's setup diagnosis for
+  `manzanas doctor` (`DoctorReport`): `ok` (false iff any check failed),
+  `build`, `protocol`, and `checks` — each a `DoctorCheck` with `name`,
+  `status` (`ok`|`warn`|`fail`|`n/a`), `detail`, and — for warn/fail — a
+  one-line actionable `remedy`. Checks cover the daemon itself, the
+  simulator toolchain (`xcrun`, `ios_runtime`, `devicectl`), the run
+  `journal` dir, the warm pool's `boot_gates`, and per configured
+  physical device `wda:<udid>` reachability and `mirror:<udid>`
+  (plus `mirror:<udid>:<probe>`) — the mirrord helper's `/v1/doctor`
+  capability probes (§5.3), whose detail names the responsible process
+  for a missing TCC grant. `n/a` marks checks that do not apply to the
+  host (simulator tooling on a `--mock`/non-macOS daemon, or device
+  probes when the devices config has `enabled:false` — the daemon runs
+  no WDA/mirror clients then, so live probes are skipped) — never a
+  failure. `?target=<udid>` scopes the per-device checks to one UDID
+  (an unmatched target adds a failing `target` check, including when no
+  devices are configured or they are disabled). Failed checks
+  are data: the route still answers `200`. Additive: older daemons
+  answer `404` (builds without a doctor wired answer
+  `501 not_implemented`), which clients must tolerate.
 - `POST /v0/pool/advise` records a fleet scheduler's advisory view of
   warm-pool demand (`PoolAdviseRequest`): `source`, `window_seconds`, and
   `classes` — each a `PoolClassAdvice` with `labels` (the demand class),
@@ -104,6 +128,21 @@ A daemon with video recording wired marks targets with a live recording
 Labels are derived by the registry from runtime and device type, lowercased
 and hyphenated, e.g. an "iPhone 17 Pro" on "iOS 26.5" gets
 `["simulator", "ios26", "ios26.5", "iphone-17-pro"]`.
+
+A mirror-backed physical device (§5.3) additionally carries a `mirror`
+label, with its `state` derived from the mirrord helper: `ready` →
+`Booted`; helper not running / no phone window / socket unreachable →
+`Unknown` plus `disconnected`. A blocked mirroring session stays
+`Booted` plus a `mirror-blocked` label; because the registry's routine
+liveness probe is the light status (§5.3), which cannot see the
+interstitial, the label is derived from a periodic full (OCR-backed)
+status and can lag the interstitial by up to about a minute — the block
+itself surfaces immediately on the action/observe paths. A mirror device whose
+CoreDevice tunnel is down keeps working through the mirror but carries a
+`no-tunnel` label (devicectl-routed `install_app`/`launch_app`/
+`terminate_app` fail); one that devicectl does not enumerate at all is
+synthesized from the mirror config with a `no-devicectl` label (same
+actions fail). See [docs/devices.md](../docs/devices.md).
 
 Boot / shutdown (requires an active lease on the target):
 
@@ -224,6 +263,28 @@ operation on a target requires an active lease.
   Renewal is allowed through the grace window (below): a renew that
   arrives after nominal `expires_at` but before `grace_until` succeeds,
   clears `grace_until`, and re-arms the lease with the new TTL.
+- `POST /v0/leases/{id}/pause` body `PauseLeaseRequest`
+  (`reason?` — freeform, surfaced as `paused_reason`) → `200 {Lease}` with
+  the additive fields `paused: true`, `paused_at`, and `paused_reason?`
+  stamped on the (still `active`) lease. Human preemption: while paused,
+  dispatching actions on the lease is refused with
+  `409 {"code":"lease_paused"}` — except the read-only kinds `observe`
+  and `screenshot`, which stay available so the holder can watch the
+  human's progress. Pause does **not** stop the TTL clock: the holder
+  must keep renewing (the grace window applies as usual), so an
+  abandoned pause can never hold a target forever. Pausing an
+  already-paused lease keeps the original `paused_at` and only updates
+  `paused_reason` when a non-empty reason is given. Only active leases
+  can pause (terminal → `410 lease_expired`, unknown → `404`). Fires a
+  `lease.paused` WS event. v1 pause is explicit and API-driven (an agent
+  or human tooling calls it); automatic human-presence detection from
+  mirrord is future work.
+- `POST /v0/leases/{id}/resume` → `200 {Lease}` with the pause fields
+  cleared, unblocking action dispatch. Resuming a non-paused active
+  lease is a no-op success; terminal → `410`, unknown → `404`. Fires a
+  `lease.resumed` WS event. A lease that expires or is released while
+  paused ends normally (the pause fields are cleared on the terminal
+  transition).
 - `DELETE /v0/leases/{id}` → `200 {Lease}` with `state:"released"`.
   Releasing (or expiry) hands the target to the head of the matching queue.
   Release is idempotent: for a lease already in a terminal state
@@ -275,11 +336,13 @@ back later) keeps the plain 30-minute contract above.
 ```
 
 Methods mirror REST 1:1: `targets.list`, `targets.boot`, `targets.shutdown`,
-`leases.acquire`, `leases.get`, `leases.renew`, `leases.release`,
+`leases.acquire`, `leases.get`, `leases.renew`, `leases.pause` (params
+`{id, reason?}`), `leases.resume` (params `{id}`), `leases.release`,
 `actions.dispatch`, `actions.batch`, `streams.open`. Params/results are the
 same JSON bodies as REST. Events: `lease.granted`, `lease.expiring`
 (an active lease entered its renewal grace window — renew now or it
-expires for real at `grace_until`), `lease.expired`, `target.state`.
+expires for real at `grace_until`), `lease.expired`, `lease.paused`,
+`lease.resumed` (human preemption, §3), `target.state`.
 
 Action dispatch (`actions.dispatch` / `actions.batch`) is handled off the
 connection's read loop, so a long-running action (e.g. a `wait_*` poll)
@@ -333,7 +396,9 @@ Other rules:
 
 - The target is the one held by `lease_id`; there is no separate `udid`
   field. A missing/unknown lease is `404 not_found`, a non-active lease is
-  `410 lease_expired`. Terminal (released/expired) leases stay resolvable
+  `410 lease_expired`. A paused lease (§3, human preemption) refuses
+  everything except the read-only `observe`/`screenshot` kinds with
+  `409 lease_paused`. Terminal (released/expired) leases stay resolvable
   for the manager's retention window (10 minutes); after that they are
   garbage-collected and indistinguishable from unknown leases
   (`404 not_found`). Builds with no actions backend wired return
@@ -389,7 +454,7 @@ HID (AXe):
 
 | `kind` | payload | result |
 |---|---|---|
-| `tap` | `x`, `y` (>= 0) | `x`, `y` |
+| `tap` | `x`, `y` (>= 0), `duration_ms?` (number, 1–10000: hold the press that long — a long-press; out-of-range is `400 bad_request`) | `x`, `y`, `duration_ms?` (echoed when a long-press) |
 | `swipe` | `start_x`, `start_y`, `end_x`, `end_y` (>= 0), `duration_seconds?` | echoes the path |
 | `type` | `text` (chars AXe can map to HID keycodes; an unmappable char such as `\t` is `400 bad_request`, and any prefix before it may already have been typed), `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `typed_runes`, `strategy?` (echoed when `paste`) |
 | `button` | `name` ∈ `home`, `lock`, `side-button`, `siri`, `apple-pay` | `button` |
@@ -398,6 +463,28 @@ HID (AXe):
 | `tap_element` | matcher (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?` — or `predicate?`, see below), `anchor?` (`start` \| `center` (default) \| `end`), `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node, no children), `x`, `y` (tapped point), `elapsed_ms`, `polls` |
 | `type_into_element` | same matcher/timing/anchor fields plus `text`, `strategy?` (`hid` default \| `paste`), `require_focus?` (default `false`) | `tap_element`'s fields plus `typed_runes`, `strategy?` (echoed when `paste`) |
 | `scroll_to_element` | matcher (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?` — or `predicate?`), `anchor?`, `direction?` (`down` (default) \| `up` \| `left` \| `right`), `max_scrolls?` (default 8, max 30), `refresh?`, `timeout_ms?` (default 30000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children), `scrolls`, `polls`, `elapsed_ms`, `hash` (tree hash at success) |
+| `scroll_until` | `text` (non-empty; v1 text-only — case-insensitive substring of a visible node's label, value, or placeholder), `direction?` (`down` (default) \| `up` \| `left` \| `right`), `max_scrolls?` (default 8, max 30), `moved_jaccard?` (default 0.6, in `(0, 1]`), `refresh?`, `timeout_ms?` (default 30000, max 120000), `interval_ms?` (default 500, min 10) | `found`, `element?` (matched node, when found), `scrolls`, `screens`, `moved_history`, `end_of_list`, `elapsed_ms`, `hash` |
+| `scroll_collect` | `rect?` (object with numeric `x`, `y`, `w`, `h`; harvest only boxes whose centre falls inside it), `direction?`, `max_scrolls?`, `moved_jaccard?`, `refresh?`, `timeout_ms?`, `interval_ms?` (same defaults as `scroll_until`) | `screens_texts` (per-screen deduped text boxes), `collected`, `scrolls`, `screens`, `moved_history`, `end_of_list`, `elapsed_ms`, `hash` |
+| `tap_template` | `template_base64` (inline base64 PNG/JPEG template) or `name` (+ `bundle_id?`, default `_global`) — a stored template saved by `save_template`, looked up under the capture's device class; exactly one of the two — `threshold?` (NCC score in (0, 1], default 0.8), `rect?` (`{x,y,w,h}` search region, pixels in the capture image), `timeout_ms?` (default 3000, max 120000), `interval_ms?` (default 500, min 10) | `matched:true`, `x`, `y` (the tapped match centre, tap coordinates), `score`, `threshold`, `elapsed_ms`, `polls`, `name`/`bundle_id` (echoed for named lookups) |
+
+`tap_template` is the matching half of the template library (see §5.1
+`save_template` and [docs/templates.md](../docs/templates.md)): each poll
+takes a **fresh** capture through the backend's normal screenshot path,
+grayscales it and the template, matches by normalized cross-correlation
+(`internal/imgutil.MatchNCC`), and — once the best score reaches
+`threshold` — taps the centre of the matched region. `rect` restricts
+the search to a sub-region of the capture (a rect that does not fit is
+`400 bad_request` naming the capture size); match positions stay in
+full-capture pixel coordinates either way, and the tap converts them to
+the backend's tap space (points on simulators and WDA devices via the
+observed viewport width, capture pixels as-is on the mirror). Named
+lookups resolve like `assert_template`: a daemon without
+`--templates-dir` is `503 unavailable`, and a name the store lacks for
+the capture's device class is `404 not_found`. A budget that expires
+without a match is `408 timeout` whose message carries the best score
+seen, so callers know how close the screen came. It is a mutating kind:
+on mirror-backed devices it is gated by `allow_input` like `tap`
+(§5.3).
 
 `tap_element` and `type_into_element` are composite actions: the server
 observes the a11y tree, finds the best element matching the predicate
@@ -437,6 +524,33 @@ candidate listed (role/label/id/frame) in the message, and zero matches
 keep polling until `408 timeout`. An `absent:true` wait treats an
 ambiguous predicate as "still present" and keeps polling.
 
+`tap_element` and `type_into_element` resolve the element through a
+backend-registered **resolver ladder** (additive, v0; see
+docs/resolver-ladder.md): ordered resolution rungs — the element-map
+fast path (`map`, first, when the daemon has an element map — see §5.5
+and docs/elementmap.md), the a11y tree (`ax`), then OCR text match
+(`ocr`) where an OCR source exists (mirror-backed devices; WDA-only
+devices register no OCR rung), then a saved-template match
+(`template`, on daemons with a template library): when an earlier rung
+misses, a template whose name matches the flat matcher's `id` or
+`label` (as-is or slugged, `"Sign In"` → `"sign-in"`; structured
+`predicate` matchers never key a template) is looked up under the
+launched bundle then `_global` for the capture's device class and
+NCC-matched against a fresh capture at the default 0.8 threshold —
+each attempt bounded by a per-rung budget. Successful results
+additionally carry `resolver` (the rung name that resolved the
+element: `"map"`, `"ax"`, `"ocr"`, `"template"`, ...), and
+`resolver_skipped` (e.g.
+`"ax(circuit-open)"`) when a rung was skipped by the per-lease,
+per-bundle AX circuit breaker. When no rung resolves the element within
+`timeout_ms` the `408 timeout` is an **escalation**: alongside the
+off-screen hint, the journal entry's `escalation` field carries a
+compact observation bundle — the per-rung outcome trail (`rungs`), the
+last observation's text boxes (`text_boxes`, up to 24
+`{text,x,y,w,h}`), any `resolver_skipped` — plus a best-effort
+`escalation.png` screen capture artifact. Journal v0 readers ignore
+these additive keys.
+
 The tap lands on the element's frame centre by default. `anchor: "start"`
 or `"end"` moves it to a point inset half the frame height from the
 leading/trailing edge instead — for a text element whose label is longer
@@ -465,6 +579,53 @@ into the viewport (pinned off-screen, non-scrollable container) is `409
 off_viewport`. On success the result carries the element with its
 `frame`, the swipe count, and the tree `hash` of the final observation
 (cheap change detection without another `observe`).
+
+`scroll_until` and `scroll_collect` are list-scrolling composites: one
+call replaces an agent round-trip per screen. Each iteration gestures
+once (`direction` is the content edge to reveal, as in
+`scroll_to_element`), waits for the screen to settle (bounded poll until
+the masked text set holds still), then decides whether the list actually
+moved by comparing the before/after text sets — masked against the
+volatile status-bar/home-indicator bands so a ticking clock does not
+read as movement — with Jaccard overlap: overlap `>= moved_jaccard`
+(default 0.6) is a non-move, so a bounce-back overscroll at the end of a
+list is not mistaken for progress. End-of-list is two consecutive
+non-moves, each confirmed by a lazy-load grace re-poll (a list paused on
+a loading spinner gets one more beat to resolve into new rows before the
+non-move counts). On simulators and WDA devices the gesture is a swipe
+at the standard 40% fraction; on mirror-backed devices it is a trackpad
+wheel scroll (falling back to a momentum flick when the wheel path is
+unavailable, e.g. an older mirrord without `/v1/scroll`; horizontal
+directions always flick since wheel events carry no dx). Mirror
+per-action verification cooperates with end-of-list detection rather
+than fighting it: a gesture the helper delivered and pixel-verified to
+have changed nothing (`input-not-delivered`, or an unverified ack whose
+check ran) is not fatal — by construction the detector needs a
+no-change gesture to succeed. The verdict is not trusted blindly
+either (the helper can miss a late render), so the loop still settles
+and re-observes, letting the ordinary Jaccard moved check decide the
+non-move; `verify:"unavailable"` (nobody could look, the screen may
+have moved) remains a hard `503 unavailable`. The same rule applies to
+`scroll_to_element`'s swipes: two consecutive verified no-change
+swipes end in its documented `timeout`/`off_viewport` failure — after
+one more confirming observation — instead of an input error.
+
+`scroll_until` stops as soon as `text` matches a visible node
+(case-insensitive substring of label, value, or placeholder — v1 is
+text-only, so it works identically over OCR trees). Not finding the text
+is a **result**, not an error: `{found: false}` with `end_of_list`
+telling the caller whether the list ran out of content or `max_scrolls`
+/ `timeout_ms` ran out first. `moved_history` carries the per-gesture
+Jaccard overlaps (one entry per gesture) so a caller can see how the
+list behaved; `screens` counts settled observations examined.
+
+`scroll_collect` harvests every visible text run as a `{text, x, y, w,
+h}` box while scrolling to the end of the list (or `max_scrolls`),
+deduplicating across screens by normalized text — a sticky header
+appears once, on the first screen it was seen. `screens_texts` is the
+per-screen list of newly-seen boxes (`index`, `texts`); `collected` is
+the total. An optional `rect` restricts harvesting to boxes whose
+centre falls inside it.
 
 Typing strategies (`type` and `type_into_element`):
 
@@ -521,6 +682,7 @@ Observation:
 |---|---|---|
 | `observe` | `include_raw?`, `refresh?`, `format?` (`"json"` default \| `"compact"`), `interactive_only?`, `roles?` (array of role names), `scope?` (structured predicate object; must match exactly one element), `exclude_system_chrome?` | `tree` (compacted a11y nodes; replaced by `tree_compact` — one depth-indented line per element with stable depth-first `[i]` indexes — when `format:"compact"`), `hash` (always digests the FULL unfiltered tree), `total_elements?`/`returned_elements?` (when filters/scope active), `raw?`, `detail?` (`"empty_tree"` when the tree is empty) |
 | `screenshot` | `inline?` (default true), `format?` (`png` default \| `jpeg`), `quality?` (JPEG only, 1–100, default 80), `max_dim?` (longer-edge pixel cap; the capture is downscaled server-side, aspect preserved) | `format`, `bytes`, `sha256`, `backend`, `png_base64?` / `jpeg_base64?` (key follows `format`) |
+| `save_template` | `name` (template name; letters, digits, `.`, `-`, `_`), `rect` (`{x,y,w,h}` pixels in the capture image), `bundle_id?` (grouping key, default `_global`), `source_run?` (run/lease id recorded in the sidecar) | `name`, `bundle_id`, `device_class` (`"<backend>/<img_w>"`), `window_px` (`[w,h]` of the full capture), `rect`, `bytes`, `sha256`, `backend` |
 | `audit` | `checks?` (subset of `touch_target`, `clipping`, `alignment`, `spacing`, `safe_area`, `missing_labels`; default all), `region?` (`{x,y,w,h}` points), matcher fields or `predicate?` (scope to one subtree), `min_touch_pt?` (default 44), `alignment_tolerance_pt?` (default 4), `spacing_tolerance_pt?` (default 4), `safe_area_insets?` (`{top?,bottom?,left?,right?}`; default device-class heuristic), `inline?` (default true), `include_system_chrome?` (default false — system chrome such as the status bar, keyboard, and scroll-indicator pseudo-elements is suppressed from findings by default; see `internal/actions/chrome.go`), `include_covered_controls?` (default false — `touch_target` withholds small controls fully covered by an enclosing ≥min-size tappable Cell or Button row), `timeout_ms?`, `interval_ms?` | `findings` (array of `{check, ref, element{role?,label?,id?,frame?}, related?, measured?, evidence}` — measured evidence, no verdicts), `counts` (per check), `suppressed_elements`, `suppressed_covered_controls?`, `elided?` (per-check overflow past the 20-findings cap), `hash`, `viewport?`, plus the annotated screenshot as `format`/`bytes`/`sha256`/`backend`/`png_base64?` — or `screenshot_error?` when the capture failed (findings survive) |
 
 `observe` runs `axe describe-ui` and compacts the result: each node carries
@@ -559,6 +721,17 @@ entry; `inline:false` strips the base64 payload from the response only, so
 the capture can still be fetched from the journal. On a journal-less daemon
 `inline:false` still omits the bytes (nothing retains them).
 
+`save_template` takes a **fresh** capture through the backend's normal
+screenshot path, crops `rect` out of it, and stores the crop in the
+daemon's template library (see [docs/templates.md](../docs/templates.md)
+and §5.4) as `<bundle_id>/<name>@<device_class>` with a JSON metadata
+sidecar. It is the storage half of pixel-template matching; the
+matching half is `tap_template`, `assert_template`, and the resolver
+ladder's `template` rung. A `rect` that does not fit inside the
+capture is `400 bad_request` (the error names the capture size); a
+daemon started without a template library (`--templates-dir ""`) answers
+`503 unavailable`. The action journals normally.
+
 `audit` runs deterministic geometry checks over one a11y-tree observation
 and produces findings — measured evidence with an `evidence` sentence per
 finding, never pass/fail verdicts. Each finding's `ref` (`F1`, `F2`, ...)
@@ -577,6 +750,7 @@ Waiting (deterministic sync primitives; poll the same a11y pipeline as
 |---|---|---|
 | `wait_for_element` | matcher (`label?`, `role?`, `value?`, `id?`, `placeholder?`, `exact?`, `match?`, `in_frame?` — or `predicate?`, see the element actions), `absent?`, `refresh?`, `timeout_ms?` (default 10000, max 120000), `interval_ms?` (default 500, min 10) | `element` (matched node incl. `frame`, no children) or `absent:true`, `elapsed_ms`, `polls`, `hash` (tree hash of the final poll) |
 | `wait_tree_stable` | `stable_samples?` (default 3, 2–20), `timeout_ms?` (default 15000, max 120000, doubles as the max wait), `interval_ms?` (default 500, min 10), `require_stable?` (default false) | `stable`, `hash`, `settled_ms`, `samples` |
+| `wait_for_stable` | `quiet_ms?` (default 500), `timeout_ms?` (default 15000, max 120000, doubles as the max wait), `interval_ms?` (default 500, min 10), `threshold?` (default 0.002, exclusive 0..1), `mask?` (list of `{x,y,w,h}` capture-pixel rects excluded from the diff), `require_stable?` (default false) | `stable`, `waited_ms`, `last_diff`, `samples` |
 
 `wait_for_element` polls a fresh compacted tree each interval until an
 element matching the predicate appears (or, with `absent:true`, until no
@@ -602,6 +776,21 @@ returns) is identical for `stable_samples` consecutive polls — i.e.
 animations and loads have settled — and returns `stable:true` with the
 final `hash` plus the settle duration.
 
+`wait_for_stable` is the pixel-diff counterpart: instead of the a11y
+tree it polls **screenshots**, downscales each capture to quarter-
+resolution grayscale, and compares consecutive frames with a normalized
+mean-absolute-diff. The screen counts as settled once every
+frame-to-frame diff stays under `threshold` for the `quiet_ms` window.
+`mask` rectangles (capture-image pixels) are excluded from the diff so
+volatile regions — clocks, spinners, blinking cursors — don't keep the
+wait alive. Because it needs no accessibility tree or OCR pass per
+poll, it works identically on every backend and is the cheap settle
+primitive on mirror-backed devices. `last_diff` is the final observed
+diff; `samples` counts captures taken. A wait whose budget expires
+before two frames were ever captured (every poll failed — a dead WDA
+runner, a mirroring hiccup on every capture) is an error, not a soft
+result, mirroring wait_tree_stable's never-readable-tree rule.
+
 `timeout_ms` is a **max wait**, not a deadline that fails: a screen that
 never holds still (a looping React Native onboarding animation, a
 spinner, a video) returns `200` with `stable:false`, the last observed
@@ -619,6 +808,52 @@ old `408 timeout` behaviour instead.
 
 `wait_for_element` returns `408 {"code":"timeout"}` when its budget is
 exhausted; other poll failures map to the usual action errors.
+
+Verification (assertion kinds plus opt-in verified taps):
+
+| `kind` | payload | result |
+|---|---|---|
+| `assert_text` | `text`, `fuzzy?` (default `true` — case-insensitive substring; `false` = case-insensitive whole-run equality), `min_confidence?` (0–1; filters OCR-derived runs on mirror devices, no-op on tree backends whose text is exact), `timeout_ms?` (default 3000, max 120000), `interval_ms?` (default 500, min 10) | `asserted:"text"`, `found:true`, `text`, `matched` (the run that matched), `elapsed_ms`, `polls` |
+| `assert_no_text` | same fields as `assert_text` | `asserted:"no_text"`, `absent:true`, `text`, `elapsed_ms`, `polls` |
+| `assert_template` | `template_base64` (inline base64 PNG/JPEG template) or `name` (+ `bundle_id?`, default `_global`) — a stored template saved by `save_template`, looked up under the capture's device class; exactly one of the two — `threshold?` (NCC score in (0, 1], default 0.8), `timeout_ms?`/`interval_ms?` as above | `asserted:"template"`, `found:true`, `x`, `y` (best match top-left, capture pixels), `score`, `threshold`, `elapsed_ms`, `polls`, `name`/`bundle_id` (echoed for named lookups) |
+
+Assertions read the backend's existing observe source — the a11y tree's
+label/value/placeholder runs on simulators and WDA devices, the OCR text
+boxes on mirror-backed devices (where `min_confidence` filters on real
+recognition confidence) — and retry within a short bounded budget
+(`timeout_ms`, default 3 s) so a screen still settling after an action
+gets another look before the assertion fails. A postcondition that stays
+false through the whole budget is `417 {"code":"assertion_failed"}` —
+deliberately distinct from `timeout` (a wait that never matched): the
+caller asserted a state and the daemon observed it to be false.
+`assert_template` grayscales the current screen capture and the
+template and matches by normalized cross-correlation
+(`internal/imgutil.MatchNCC`); coordinates are native capture pixels.
+Named lookups resolve against the template store (§5.1 `save_template`)
+under the capture's device class (`"<backend>/<img_w>"`): a daemon
+without `--templates-dir` is `503 unavailable`, and a name the store
+lacks for that class is `404 not_found`.
+
+`tap` and `swipe` additionally accept opt-in pixel verification via
+payload `verify: true`: the backend captures a downscaled grayscale
+frame through its existing screenshot path before the input and again
+after a short settle (`verify_settle_ms?`, default 300, clamped to
+10000), compares them
+with a masked mean absolute pixel difference, and adds
+`verified: true|false` plus the measured `pixel_delta` (0–1) and the
+`pixel_threshold` applied (`verify_threshold?`, default 0.001) to the
+result. Optional `verify_masks?` (array of `{x,y,w,h}` rects in native
+capture coordinates) excludes volatile regions (clocks, spinners) from
+the diff. Verification is a report, never a gate: a tap that
+legitimately changes nothing returns `ok:true` with `verified:false`,
+and a capture failure degrades to a `verify_error` field on a
+successful action. The pixel evidence keys are distinct from the a11y
+`hash`/`ax_before`/`ax_after` fields — they carry pixel deltas, never
+tree hashes. On simulators a verified tap always runs through the cold
+backend (the warm helper owns no screenshot path). On mirror-backed
+devices the mirrord helper self-verifies every gesture, so it owns the
+`verified` verdict and the daemon-level pixel wrapper is skipped (see
+the iPhone Mirroring notes below, §5.2).
 
 Pasteboard (simctl):
 
@@ -682,7 +917,7 @@ from simulators in these protocol-visible ways:
 | `install_app` | `path` (a `.app` on the daemon host) | `installed` |
 | `launch_app` | `bundle_id`, `terminate_running?`, `args?` | `bundle_id` (no `pid`: devicectl does not report one) |
 | `terminate_app` | `pid` (positive integer; devicectl terminates by process id, not bundle id) | `terminated_pid` |
-| `tap` | `x`, `y` (>= 0) | `x`, `y`, `backend:"wda"` |
+| `tap` | `x`, `y` (>= 0), `duration_ms?` (number, 1–10000: a long-press via a W3C pointer chain, pointerDown → pause → pointerUp; out-of-range is `400 bad_request`) | `x`, `y`, `duration_ms?` (echoed when a long-press), `backend:"wda"` |
 | `swipe` | `start_x`, `start_y`, `end_x`, `end_y`, `duration_seconds?` | echo of the coordinates, `backend:"wda"` |
 | `type` | `text` | `typed_runes`, `backend:"wda"` |
 | `button` | `name` (`home`\|`lock`\|`volume-up`\|`volume-down`) | `button`, `backend:"wda"` |
@@ -693,8 +928,11 @@ from simulators in these protocol-visible ways:
 | `type_into_element` | same fields as the simulator kind | same result shape |
 | `wait_for_element` | same fields as the simulator kind | same result shape |
 | `wait_tree_stable` | same fields as the simulator kind | same result shape |
+| `wait_for_stable` | same fields as the simulator kind | same result shape (frames via WDA screenshots) |
 | `scroll_to_element` | same fields as the simulator kind | same result shape (swipes via WDA) |
 | `screenshot` | same fields as the simulator kind | same result shape, `backend:"wda"` |
+| `save_template` | same fields as the simulator kind | same result shape, `device_class` is `"wda/<img_w>"` |
+| `tap_template` | same fields as the simulator kind | same result shape (capture and tap via WDA) |
 
 > Device `observe` changed in this version: it previously returned the raw
 > XML as `source`/`format`; it now returns the same compacted `tree` +
@@ -709,12 +947,14 @@ Device enumeration and WDA wiring are runtime-mutable (additive, v0):
 
 - `GET /v0/devices` → `200` with the daemon's current `DevicesConfig`:
   `{"enabled": bool, "wda": {"<udid>": {"url"?, "launch"?, "forward"?}},
-  "mirror"?: {"<udid>": {"socket"?}}}`
+  "mirror"?: {"<udid>": {"socket"?, "allow_input"?}}}`
   (`url` the WDA endpoint, `launch` a `devicectl:<bundle-id>` or
   `xctestrun:<path>` auto-launch spec, `forward` a supervised
   `<local>:<remote>` usbmux port forward; `mirror` maps a device to the
   mirror action backend — `socket` is the mirrord helper's unix socket,
-  default `~/.manzanasd/mirrord.sock`. At most one mirror-backed device
+  default `~/.manzanasd/mirrord.sock`, and `allow_input` (bool, default
+  false) opts the device into mutating mirror actions — the mirror is
+  read-only without it, §5.3. At most one mirror-backed device
   per config, and a UDID cannot appear in both `wda` and `mirror`).
 - `POST /v0/devices` with a `DevicesConfig` body **replaces** the whole
   runtime config: enumeration toggles, supervisors for removed/changed
@@ -746,6 +986,23 @@ HID/observation kinds through macOS iPhone Mirroring (see
 (`install_app`/`launch_app`/`terminate_app`) are unchanged. Differences
 from the WDA table above (all additive within v0):
 
+- Input is **fail-closed**: unless the device's mirror config sets
+  `allow_input: true` (or the daemon runs with
+  `--device-mirror-allow-input`), the mirror is read-only — the input
+  kinds `tap` (including long-press), `swipe`, `scroll`, `type`,
+  `button`, `tap_element`, `type_into_element`, `scroll_to_element`,
+  and `tap_template`
+  return `403 {"code":"forbidden"}` with a message naming the fix,
+  while `observe`, `screenshot`, `wait_for_element`, and
+  `wait_tree_stable` stay available. The gate tracks runtime config
+  changes (`POST /v0/devices`, SIGHUP). `forbidden` is a well-known
+  error code (additive, v0): the action kind exists and is configured,
+  but policy disables it. The fail-closed default is a deliberate
+  exception to the additive-within-v0 rule (a mirror drives a real,
+  personal phone, so input must be an explicit opt-in): mirror configs
+  written before `allow_input` existed lose input on upgrade until the
+  operator opts in — see the migration note in
+  [docs/devices.md](../docs/devices.md).
 - Every result carries `backend:"mirror"` instead of `backend:"wda"`.
 - `observe` and the composite element kinds (`tap_element`,
   `type_into_element`, `scroll_to_element`, `wait_for_element`,
@@ -755,11 +1012,82 @@ from the WDA table above (all additive within v0):
   placeholders, or hierarchy), `observe` includes an explanatory `note`,
   and `include_raw` returns the OCR boxes as `raw` with
   `raw_format:"vision-ocr-boxes"`. Element predicates can therefore only
-  match on visible text. Coordinates (input and observed frames) are
+  match on visible text. OCR nodes carry `interactable: true` as a
+  uniform **compatibility constant** (kept for v0 wire-shape
+  additivity), NOT a measurement — OCR cannot tell a button from a
+  caption, so do not treat the flag as signal on mirror trees.
+  `observe` with `interactive_only: true` therefore returns the full
+  tree, appending an explanation to the `note` field. Coordinates
+  (input and observed frames) are
   capture-image pixels, not device points. `observe` and `screenshot`
   results carry `img_w`/`img_h` — the pre-transform capture size, i.e.
   the tap coordinate space — so callers of size-capped screenshots can
-  map back to tappable coordinates.
+  map back to tappable coordinates, plus `capture_scale` — the capture's
+  pixels-per-window-point factor (the host display's backing factor;
+  OCR quality degrades on 1x captures) — when the mirrord helper
+  reports it (older helpers omit it).
+- `wait_for_stable` polls mirrord window captures (no OCR pass per
+  poll, so it is far cheaper than `wait_tree_stable` here); payload,
+  result shape, and semantics match the simulator kind, with `mask`
+  rectangles in capture-image pixels.
+- `observe` accepts recognition options: `ocr_level` (`"fast"` |
+  `"accurate"`; default the helper's, accurate) and `rect`
+  (`{x,y,w,h}`, capture-image pixels — restricts recognition to that
+  region; boxes stay in full-capture pixels). Malformed values are
+  `400 bad_request`. The daemon also applies a resolution-aware
+  auto-downscale default (long edge capped at ~1300px before
+  recognition; the helper never downscales frames at or below 640px
+  wide, so low-resolution 1x captures are never degraded). The result
+  carries honesty metadata reporting what recognition actually ran:
+  `served_scale` (resolution served to recognition relative to the
+  capture, 1.0 = full), `ocr_level` (level applied), and `rect` (echoed
+  only when one was requested). On a helper predating the options
+  route, a default-only observe falls back to the legacy
+  full-resolution pass (reported as `served_scale: 1`); explicitly
+  requested `ocr_level`/`rect` are never silently dropped and fail
+  `400 bad_request` instead. Caveat: the helper detects paused/connect
+  interstitials by scanning the recognized text, so a `rect`-scoped
+  observe can miss interstitial text outside the region and return a
+  normal-looking (often empty) tree instead of `503 unavailable` —
+  when a region-scoped observe comes back unexpectedly empty, re-observe
+  without `rect` before concluding the screen is blank.
+- `tap` accepts an optional `duration_ms` (number, 1–10000): a
+  long-press held for that duration. Values outside the range are
+  `400 bad_request` (the mirror helper is a single serial resource; an
+  unbounded press would wedge every later action). The result echoes
+  `duration_ms` — the mirror helper independently caps the duration it
+  runs at 10 s and echoes the applied value in its ack, so the result
+  reports what actually ran even for callers that bypass the daemon's
+  validation. Simulators (touch-down → delay → touch-up) and WDA-backed
+  devices (W3C pointer chain) implement the same field with the same
+  bound — long-press works identically on every backend.
+- `scroll` (mirror-only kind) posts wheel-scroll events at a point:
+  payload `x`, `y` (>= 0), `dy` (non-zero; positive scrolls content
+  down, like a trackpad two-finger-up); result echoes them plus
+  `backend:"mirror"`. Units are capture-image pixels. Useful for fine
+  list movement without the momentum a swipe gesture picks up. On
+  simulators and WDA-backed devices `scroll` is
+  `501 {"code":"not_implemented"}`.
+  - `scroll` additionally accepts the optional `fallback` field, whose
+    only value is `"swipe"` (anything else is `400 bad_request`). With
+    the opt-in, a wheel scroll the helper refused *without sending
+    anything* — `input-refused` (--background=on forbids a scroll that
+    needs the focused path) or `focus-lost` (another app held the
+    Mac's focus) — is delivered as the equivalent drag: a flick
+    centered on (x, y) covering `dy` pixels (positive `dy` drags the
+    finger up; a drag that would leave the capture is shifted back
+    inside it, length preserved, since the helper bounds-checks both
+    drag endpoints — one capture on this path learns the bounds). The
+    result then carries
+    `method: "swipe-fallback"`, the swipe geometry (`swipe_start_x`,
+    `swipe_start_y`, `swipe_end_x`, `swipe_end_y`), a `note` naming the
+    refusal, and the *swipe's* ack fields (`input_mode`, `verified`,
+    `verify`, ...), so journals show what actually ran. Failures where
+    events may have reached the phone (`input-not-delivered`,
+    `scroll-not-delivered`, unverified acks) or where a swipe would fail
+    identically (`blocked`, `no-window`, `not-running`) never trigger the
+    fallback; without the opt-in every refusal surfaces unchanged. Additive: absent `fallback`
+    is the pre-existing behavior.
 - `tap`/`swipe`/`scroll` coordinates outside the current capture
   (`img_w`×`img_h`) are `400 bad_request`: an unbounded synthetic click
   would land on the host Mac's desktop, not the phone.
@@ -768,7 +1096,21 @@ from the WDA table above (all additive within v0):
 - `type` and `type_into_element` reject the `paste` strategy and
   `require_focus` with `501 {"code":"not_implemented"}`; text is limited
   to characters expressible as US-layout HID keycodes (others are
-  `400 bad_request`).
+  `400 bad_request`). Typing needs the mirroring window frontmost: iOS
+  routes key events into text input only while iPhone Mirroring holds
+  the Mac's focus (backgrounded keystrokes reach the process — the
+  Cmd-shortcuts still work — but land in no text field), so on a
+  background-capable host a `type` degrades per action to the focused
+  path: the helper activates the window, types, then hands focus back
+  to the app that previously held it (best-effort). The result carries
+  `input_mode:"focused-degrade"` and an `input_note` explaining the
+  focus grab and whether the previous app took focus back. Under
+  `--background=on` (which forbids any activation) `type` is refused
+  with `input-refused` and nothing is sent; if activation fails because
+  another app cannot be displaced, the existing `focus-lost` refusal
+  applies. The iOS on-screen keyboard never appears under mirroring
+  (the mirror attaches a virtual hardware keyboard) — that is normal,
+  not a focus failure.
 - `button` supports only `home`; `lock`/`volume-up`/`volume-down` are
   `501 {"code":"not_implemented"}` (physical-phone functions the mirror
   cannot reach).
@@ -777,6 +1119,192 @@ from the WDA table above (all additive within v0):
 - Mirroring interstitials (not running, no window, "iPhone in Use"
   pause) surface as `503 {"code":"unavailable"}` with an actionable
   message naming the physical step required.
+- The helper picks the mirroring window deterministically: the
+  largest-area on-screen layer-0 window of the iPhone Mirroring
+  process, cross-checked against the app's AX standard window when
+  readable (an AX-confirmed candidate wins). The helper's `/v1/status`
+  reports the chosen window's `window_id` (CGWindowID, additive) inside
+  `window` for diagnosing wrong-window selection, and captures whose
+  pixel size disagrees with the selected window's bounds fail loudly
+  with `capture-failed` instead of silently desynchronizing capture
+  from input.
+- Input is delivered in one of these modes, and every input result says
+  which in `input_mode`:
+  - `background` (preferred): the helper posts events addressed to the
+    iPhone Mirroring process without activating it, so driving the phone
+    does not take focus away from whoever is using the host Mac.
+  - `focused-degrade` (`type` only): a per-action degrade on an
+    otherwise background-mode host — the window is activated for the
+    duration of the typing (see the `type` bullet above) and focus is
+    handed back best-effort, with the outcome named in `input_note`.
+  - `focused` (fallback): the helper activates
+    the mirroring window and posts at the HID tap, as before. In this
+    mode input actions verify iPhone Mirroring is actually frontmost
+    before posting events; if another app on the host Mac holds focus
+    and the window cannot be brought frontmost (helper code
+    `focus-lost`), the action fails with `503 {"code":"unavailable"}`
+    and a message naming the app holding focus, and no input is sent.
+    The daemon logs a loud warning when a device's input falls back to
+    this mode. A per-action reason appears in the result's `input_note`.
+  - `scroll` uses the background path only where the helper's
+    scroll-record symbol resolves (`/v1/status` reports it as
+    `background_scroll`, additive; false or absent means scroll is
+    focused-only). Background scroll delivery is *best-effort* — the
+    WindowServer intermittently accepts scroll records that move
+    nothing on the phone — so the helper verifies each background
+    scroll and re-delivers it on the focused path only after an extra
+    late-render check proves no change (the result's `input_note` says so).
+    Because the no-change verdict
+    is fallible (the phone can render after the observation budget),
+    the helper takes one more capture against the pre-gesture frame
+    before re-delivering: a late change is returned as a verified
+    background success (the note says the render was late) instead of
+    replaying the burst and scrolling twice. Under `--background=on` the
+    fallback is forbidden and the miss surfaces as helper code
+    `scroll-not-delivered` (`503 {"code":"unavailable"}`), stating that
+    the records were accepted but nothing observably changed. That is a
+    posted-but-unproven failure, not a refusal: the records went out, so
+    it never triggers the `fallback: "swipe"` substitution, and the
+    scrolling composites count it as a non-move rather than flicking on
+    top of it.
+- Input actions are verified against the phone rather than assumed: the
+  helper captures the window before and after the gesture and requires
+  the touched region to change, re-observing with a longer settle on a
+  miss (the gesture is posted exactly once, never replayed; the one
+  exception is the background scroll fallback above, which is guarded
+  by an extra late capture so a late render is never re-posted). Results
+  carry `verified` (bool) and `verify` — `pixel-delta` (region/frame
+  diff), `ocr-delta` (`type` only: newly recognized text matching what
+  was typed appeared outside the status bar — typed glyphs move too few
+  pixels for a reliable frame diff, but they change what OCR reads;
+  unrelated text changes do not count and fall through to the pixel
+  check), `off` (verification disabled at the helper), or `unavailable`
+  (the check could not be completed) — plus `verify_delta`, the fraction of
+  sampled pixels that changed, when a delta was measured. An action the
+  helper posted but could not see land fails with
+  `503 {"code":"unavailable"}`, either as the helper's typed
+  `input-not-delivered` (all observations missed) or from the daemon
+  refusing to report an unverified action as success. `verify:"unavailable"`
+  fails too, but says something different: the events were posted and the
+  check could not run, so delivery is *unknown* — re-observe before
+  retrying a non-idempotent action rather than assuming nothing landed.
+  Only `verify:"off"`
+  (and helpers predating these fields) yield a success without evidence,
+  and they say so. Distinct from both: `input-refused` means the helper
+  sent *nothing* — `--background=on` forbade the only deliverable path
+  (for example, a scroll with no background record under that flag) — a configuration
+  limit, not a transient, so retrying without changing the helper's
+  flags cannot succeed. The element composites (`tap_element`,
+  `type_into_element`, `scroll_to_element`) enforce the same contract —
+  an unverified gesture fails their whole action, except that the
+  scrolling loops (`scroll_to_element`, `scroll_until`, `scroll_collect`)
+  read a verified no-change *scroll* gesture as a confirmed end-of-list
+  non-move rather than a failure (see §scroll_until above) — and their results
+  carry the `input_mode`/`verified`/`verify` (and `verify_delta`/
+  `input_note`, when present) fields of the composite's final gesture:
+  the tap for `tap_element`, the keystrokes for `type_into_element`,
+  the last swipe for `scroll_to_element` (a `scroll_to_element` that
+  found its target already on screen posts no gesture and stamps no
+  input fields).
+- The helper's `/v1/status` additionally reports `background` (bool —
+  focus-free input available), `input_mode`, `capture` (the active
+  capture backend: `sck`, `cgwindowlist`, `screencapture`, or `none`),
+  and `verify`. Status is cache-only: it never posts a probe event into
+  the phone (it is polled by read-only listings, including for devices
+  whose input gate is off), so before the first input or doctor run its
+  `input_mode` may be `background?` — symbols present, delivery not yet
+  demonstrated — with `background:false`. `GET /v1/status?light=1`
+  answers the same shape (stamped `probe:"light"`) but skips the
+  capture+OCR interstitial check — process/window presence only, so a
+  blocked session reports `ready` — making it cheap enough for liveness
+  polling on the helper's strictly serial worker. The target registry
+  probes it routinely, paying for a full status about once a minute to
+  keep blocked-interstitial detection (and while blocked, until the
+  interstitial clears); helpers predating the light mode get the full
+  status, with the light route re-tried about once a minute so an
+  in-place helper upgrade is picked up without a daemon restart. This
+  is why the `mirror-blocked` label (§2) can lag the interstitial by
+  up to that interval. `GET /v1/doctor` returns the
+  same fields plus `checks`, a list of `{name, ok, detail}` capability
+  probes (real capture, real event record) rather than TCC database
+  answers; the doctor's event-record probe is an explicit diagnostic
+  and does post one harmless mouse-moved record.
+- `assert_text`/`assert_no_text` read the OCR boxes, so `min_confidence`
+  filters on real Vision recognition confidence, and results carry
+  `backend:"mirror"` + `fidelity:"ocr"`. `assert_template` runs on the
+  mirror window capture; coordinates and masks are capture-image pixels.
+  For taps/swipes with `verify: true` the mirrord helper's own gesture
+  verification owns the `verified` verdict (`verified`/`verify`/
+  `verify_delta` from the input acknowledgement, and an unverified
+  gesture already fails the action): the daemon-level pre/post pixel
+  wrapper is skipped, so mirror results carry no
+  `pixel_delta`/`pixel_threshold`, and the daemon-level tuning fields
+  (`verify_threshold`/`verify_settle_ms`/`verify_masks`) have no effect.
+  A helper whose own verification is off (or predates it) cannot answer
+  `verify:true`; that degrades to a `verify_error` field on the
+  successful action rather than a silent no-verdict result.
+- Mirror-backed devices are enumerated in `/v0/targets` even on hosts
+  devicectl knows nothing about, with mirror-derived liveness and the
+  `mirror`/`mirror-blocked`/`no-tunnel`/`no-devicectl` labels (§2).
+- `save_template` crops a fresh mirror window capture; its
+  `device_class` is `"mirror/<img_w>"` and `rect` is in capture-image
+  pixels (the same space as `tap`).
+
+### 5.4 Template library (`/v0/templates`)
+
+Templates saved by `save_template` live in a cross-run on-disk library
+(default `~/.manzanasd/templates`, beside — never inside — the journal
+directory, so journal GC cannot sweep it; `--templates-dir` moves it,
+empty disables it). Two leaseless management endpoints (additive, v0):
+
+- `GET /v0/templates` → `200 {"templates":[{"bundle_id","name",
+  "device_class","window_px":[w,h],"crop_rect":{x,y,w,h},
+  "source_run"?,"min_score_seen"?,"created_at","bytes","sha256"}]}` —
+  every stored template, sorted by bundle, name, then class.
+- `DELETE /v0/templates/{bundle_id}/{name}` →
+  `200 {"bundle_id","name","removed":n}`. By default the name is removed
+  across all device classes; `?device_class=<backend>/<img_w>` scopes
+  the delete to one class. No match is `404 {"code":"not_found"}`.
+- Both are `501 {"code":"not_implemented"}` on a daemon without a
+  template library.
+
+CLI: `manzanas templates ls` and
+`manzanas templates rm BUNDLE_ID NAME [--class <backend>/<img_w>]`.
+
+### 5.5 Element map (`/v0/elementmap`)
+
+Elements resolved by successful `tap_element` / `type_into_element`
+actions are learned into a cross-run on-disk **element map** (default
+`~/.manzanasd/elementmaps`, beside — never inside — the journal
+directory, so journal GC cannot sweep it; `--element-map-dir` moves it,
+`--element-map=false` or an empty dir disables it; see
+[docs/elementmap.md](../docs/elementmap.md)). Entries are keyed by
+bundle id + device class (`<backend>/<img_w>`) + the element spec's
+canonical matcher string, and carry the resolved frame, role, label,
+and a DHash fingerprint of the screen at resolve time. The resolver
+ladder's first rung (`map`) serves the cached frame directly — no
+observe round-trip — when the current screen's DHash is within
+threshold of the recorded fingerprint; results/journal entries carry
+`resolver: "map"`. `refresh: true` bypasses the map rung (the flag asks
+for cold, uncached observation). A tap or focus failure steered by the
+map invalidates the entry. Two leaseless management endpoints (additive,
+v0):
+
+- `GET /v0/elementmap` → `200 {"elements":[{"bundle_id",
+  "device_class","name","frame":{x,y,w,h},"role"?,"label"?,
+  "screen_fingerprint","template_ref"?,"learned_at"}]}` — every
+  learned element, sorted by bundle, name, then class.
+- `DELETE /v0/elementmap/{bundle_id}?name=<matcher>` →
+  `200 {"bundle_id","name","removed":n}`. Names are free-form matcher
+  strings (`label="Sign In"`), so the name travels as a query
+  parameter, not a path segment. By default the name is removed across
+  all device classes; `&device_class=<backend>/<img_w>` scopes the
+  delete to one class. No match is `404 {"code":"not_found"}`.
+- Both are `501 {"code":"not_implemented"}` on a daemon without an
+  element map.
+
+CLI: `manzanas elementmap ls` and
+`manzanas elementmap rm BUNDLE_ID NAME [--class <backend>/<img_w>]`.
 
 ## 6. Streams (owned by the stream slice)
 
@@ -1043,3 +1571,46 @@ with `stop-on-first-failure` semantics unless a step sets
 `continue_on_error` (such steps still run after an earlier failure, and
 their own failure doesn't halt later `continue_on_error` steps, but any
 step failure makes the run `failed`).
+
+### Run verdicts and replay drift (additive)
+
+Once the steps stage ran, `Run` additionally carries `verdict` grading
+how much of the run was actually *verified*, independent of
+passed/failed:
+
+- `trusted` — every executed mutating step's postcondition was verified
+  (an opt-in `verify:true` report, a passing `expect` drift check, or a
+  following passing `assert_*` step) and nothing failed verification.
+- `degraded` — verification signals exist but coverage is incomplete or
+  negative (unverified mutating steps, a `verified:false` report, a
+  failed assert, or drift).
+- `unverified` — the run carried no verification signals at all.
+
+Mutating steps are everything that is not a pure read (the journal
+exporter's read-only classification: `observe`, `screenshot`, `audit`,
+`wait_*`, `assert_*`, ...); `batch` steps are conservatively mutating.
+The verdict is mirrored additively into the journal: the `runs.finish`
+entry's `verdict` field and the run meta's `verdict`.
+
+Step results additively carry `verified` (mirroring the §5 action
+result's opt-in verification report) and, when the step declared an
+`expect` block, `drifted` plus `drift_detail`.
+
+A step's optional `expect` block (`proto.RunStep.Expect`; YAML shape in
+[`docs/runs.md`](../docs/runs.md)) declares its expected post-state:
+`texts` (masked screen text set, compared by Jaccard overlap ≥
+`jaccard_min`, default 0.7) and/or `fingerprint` (64-bit DHash hex of the
+masked screen, compared by Hamming distance ≤ `max_hash_distance`,
+default 10). After the step succeeds the engine re-observes the screen
+through the normal §5 actions (`observe`/`screenshot`, journaled as
+usual) and compares; a mismatch is report-only — `drifted:true` and a
+verdict cap at `degraded` — unless the spec sets `strict_drift: true`,
+which fails the run with `assertion_failed` at the first drifted step. A
+capture failure skips the check (`drift_detail` explains) and never
+fails the step.
+
+Setting `record_expectations: true` on a spec journals a post-step
+observation (kind `observation`, action `runs.step_expectation`, with
+the masked `texts` set and `dhash`) after every successful mutating
+step; `manzanas journal to-spec --with-expectations` turns those back
+into `expect` blocks on the exported replay spec.

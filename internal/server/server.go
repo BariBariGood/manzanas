@@ -18,12 +18,14 @@ import (
 
 	"github.com/BariBariGood/manzanas/internal/actions"
 	"github.com/BariBariGood/manzanas/internal/buildinfo"
+	"github.com/BariBariGood/manzanas/internal/elementmap"
 	"github.com/BariBariGood/manzanas/internal/journal"
 	"github.com/BariBariGood/manzanas/internal/lease"
 	"github.com/BariBariGood/manzanas/internal/record"
 	"github.com/BariBariGood/manzanas/internal/registry"
 	"github.com/BariBariGood/manzanas/internal/state"
 	"github.com/BariBariGood/manzanas/internal/stream"
+	"github.com/BariBariGood/manzanas/internal/templates"
 	"github.com/BariBariGood/manzanas/proto"
 )
 
@@ -56,6 +58,12 @@ type Server struct {
 	actions  actions.Backend   // nil until an actions backend is wired
 	journal  *journal.Recorder // nil (no-op) until the journal is wired
 	recorder *record.Manager   // nil until video recording is wired (endpoints 501)
+	// templates is the cross-run template library; nil (endpoints 501)
+	// until wired via SetTemplates.
+	templates *templates.Store
+	// elementMap is the cross-run element map; nil (endpoints 501) until
+	// wired via SetElementMap.
+	elementMap *elementmap.Store
 	// devicesEnabled marks that the registry may contain physical
 	// device targets (--devices or a runtime devices config); guards
 	// that only exist to protect phones stay out of simulator-only
@@ -73,6 +81,9 @@ type Server struct {
 	parked func(udid string) bool
 	// poolStatus snapshots the warm pool for /v0/status; nil = no pool.
 	poolStatus PoolStatusFunc
+	// doctor runs the host setup diagnosis for GET /v0/doctor; nil means
+	// the endpoint answers not_implemented.
+	doctor DoctorFunc
 	// onLeaseEnd fires when a lease is explicitly released (expiry goes
 	// through the lease manager's event sink instead); nil = no pool.
 	// The pool uses it to reclaim daemon-booted non-pool sims.
@@ -326,6 +337,14 @@ func (s *Server) SetActions(b actions.Backend) { s.actions = b }
 // then recorded to it. A nil recorder disables journaling.
 func (s *Server) SetJournal(rec *journal.Recorder) { s.journal = rec }
 
+// SetTemplates wires the template library; when unset the /v0/templates
+// endpoints return not_implemented.
+func (s *Server) SetTemplates(st *templates.Store) { s.templates = st }
+
+// SetElementMap wires the element map; when unset the /v0/elementmap
+// endpoints return not_implemented.
+func (s *Server) SetElementMap(st *elementmap.Store) { s.elementMap = st }
+
 // record journals one protocol action; best-effort, never fails the op.
 func (s *Server) record(ctx context.Context, ev journal.Event) {
 	s.journal.Record(ctx, ev)
@@ -448,6 +467,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v0/dash/targets/{udid}/release", s.handleDashReleaseLease)
 	mux.HandleFunc("POST /v0/dash/targets/{udid}/recording/stop", s.handleDashRecordingStop)
 	mux.HandleFunc("GET /v0/status", s.handleStatus)
+	mux.HandleFunc("GET /v0/doctor", s.handleDoctor)
 	mux.HandleFunc("GET /v0/devices", s.handleDevicesGet)
 	mux.HandleFunc("POST /v0/devices", s.handleDevicesApply)
 	mux.HandleFunc("POST /v0/pool/advise", s.handleAdvisePool)
@@ -461,6 +481,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v0/leases", s.handleListLeases)
 	mux.HandleFunc("GET /v0/leases/{id}", s.handleGetLease)
 	mux.HandleFunc("POST /v0/leases/{id}/renew", s.handleRenewLease)
+	mux.HandleFunc("POST /v0/leases/{id}/pause", s.handlePauseLease)
+	mux.HandleFunc("POST /v0/leases/{id}/resume", s.handleResumeLease)
 	mux.HandleFunc("DELETE /v0/leases/{id}", s.handleReleaseLease)
 	mux.HandleFunc("GET /v0/ws", s.handleWS)
 	mux.HandleFunc("GET /v0/journal", s.handleJournalList)
@@ -503,6 +525,18 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /v0/streams", s.corsStreams(s.notImplemented("streams")))
 	}
 	mux.HandleFunc("OPTIONS /v0/streams", s.handleStreamsPreflight)
+	mux.HandleFunc("GET /v0/templates", s.handleTemplatesList)
+	mux.HandleFunc("DELETE /v0/templates/{bundle_id}/{name}", s.handleTemplatesDelete)
+	// Catch-all so unknown /v0/templates/... paths still answer with the
+	// documented JSON error shape (more specific patterns win).
+	mux.HandleFunc("/v0/templates/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, proto.ErrNotFound, "unknown templates route")
+	})
+	mux.HandleFunc("GET /v0/elementmap", s.handleElementMapList)
+	mux.HandleFunc("DELETE /v0/elementmap/{bundle_id}", s.handleElementMapDelete)
+	mux.HandleFunc("/v0/elementmap/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, proto.ErrNotFound, "unknown elementmap route")
+	})
 	mux.HandleFunc("POST /v0/actions", s.handleAction)
 	mux.HandleFunc("POST /v0/actions:batch", s.handleActionBatch)
 	mux.HandleFunc("POST /v0/runs", s.handleRunCreate)

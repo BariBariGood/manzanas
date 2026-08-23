@@ -308,6 +308,57 @@ func (s *Server) dispatchWS(ctx context.Context, env proto.Envelope) proto.Envel
 		})
 		return wsResult(env.ID, l)
 
+	case proto.MethodPauseLease:
+		var req struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(env.Params, &req); err != nil {
+			return wsError(env.ID, proto.ErrBadRequest, err.Error())
+		}
+		l, err := s.leases.Pause(req.ID, req.Reason)
+		switch {
+		case errors.Is(err, lease.ErrNotFound):
+			return wsError(env.ID, proto.ErrNotFound, "lease not found")
+		case errors.Is(err, lease.ErrNotActive):
+			return wsError(env.ID, proto.ErrLeaseExpired, "lease is not active")
+		case err != nil:
+			return wsError(env.ID, proto.ErrInternal, err.Error())
+		}
+		params := map[string]any{}
+		if req.Reason != "" {
+			params["reason"] = req.Reason
+		}
+		s.record(ctx, journal.Event{
+			Kind: "lease", LeaseID: l.ID, AgentID: l.AgentID, Action: proto.MethodPauseLease,
+			Params: params, Status: "ok",
+		})
+		s.events.broadcast(proto.EventLeasePaused, l)
+		return wsResult(env.ID, l)
+
+	case proto.MethodResumeLease:
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(env.Params, &req); err != nil {
+			return wsError(env.ID, proto.ErrBadRequest, err.Error())
+		}
+		l, err := s.leases.Resume(req.ID)
+		switch {
+		case errors.Is(err, lease.ErrNotFound):
+			return wsError(env.ID, proto.ErrNotFound, "lease not found")
+		case errors.Is(err, lease.ErrNotActive):
+			return wsError(env.ID, proto.ErrLeaseExpired, "lease is not active")
+		case err != nil:
+			return wsError(env.ID, proto.ErrInternal, err.Error())
+		}
+		s.record(ctx, journal.Event{
+			Kind: "lease", LeaseID: l.ID, AgentID: l.AgentID, Action: proto.MethodResumeLease,
+			Status: "ok",
+		})
+		s.events.broadcast(proto.EventLeaseResumed, l)
+		return wsResult(env.ID, l)
+
 	case proto.MethodReleaseLease:
 		var req struct {
 			ID string `json:"id"`

@@ -106,6 +106,35 @@ type HostStatus struct {
 	PoolAdvice *PoolAdviceState `json:"pool_advice,omitempty"`
 }
 
+// Doctor check statuses. "n/a" marks a check that does not apply to
+// this host (simulator tooling on a --mock daemon) — never a failure.
+const (
+	DoctorOK   = "ok"
+	DoctorWarn = "warn"
+	DoctorFail = "fail"
+	DoctorNA   = "n/a"
+)
+
+// DoctorCheck is one host diagnostic from GET /v0/doctor: a name, its
+// status, what was observed, and — for warn/fail — a one-line actionable
+// remedy. Additive (v0).
+type DoctorCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+	Remedy string `json:"remedy,omitempty"`
+}
+
+// DoctorReport is the response of GET /v0/doctor: the daemon's setup
+// diagnosis. OK is false iff any check failed (warn and n/a do not
+// count). Additive (v0); older daemons answer 404.
+type DoctorReport struct {
+	OK       bool          `json:"ok"`
+	Build    string        `json:"build,omitempty"`
+	Protocol string        `json:"protocol,omitempty"`
+	Checks   []DoctorCheck `json:"checks"`
+}
+
 // PoolAdviceAction is a broker's advisory direction for a daemon's warm
 // pool: grow (demand for a class keeps falling to cold boots) or shrink
 // (warm capacity sat idle through the observation window).
@@ -190,6 +219,15 @@ type Lease struct {
 	// or "video" (start a screen recording when the target is booted under
 	// this lease; it is stopped and ingested when the lease ends).
 	Record string `json:"record,omitempty"`
+	// Paused marks an active lease preempted by a human (or operator
+	// tooling): action dispatch on the lease is blocked (except read-only
+	// observation) until it is resumed. Pause does not stop the TTL
+	// clock — the holder must keep renewing a paused lease. Additive (v0).
+	Paused bool `json:"paused,omitempty"`
+	// PausedAt is when the current pause began. Additive (v0).
+	PausedAt *time.Time `json:"paused_at,omitempty"`
+	// PausedReason is the freeform reason given at pause time. Additive (v0).
+	PausedReason string `json:"paused_reason,omitempty"`
 	// Host and HostAddr identify the daemon that owns this lease. Set only
 	// by a broker: clients should talk to HostAddr directly for target ops
 	// (boot, actions, streams) after acquiring through the broker.
@@ -282,6 +320,13 @@ type RecordingStopResult struct {
 // RenewLeaseRequest extends an active lease's TTL.
 type RenewLeaseRequest struct {
 	TTLSeconds int `json:"ttl_seconds,omitempty"` // default: original TTL
+}
+
+// PauseLeaseRequest pauses an active lease for human preemption
+// (POST /v0/leases/{id}/pause). The optional Reason is surfaced on the
+// lease as paused_reason.
+type PauseLeaseRequest struct {
+	Reason string `json:"reason,omitempty"`
 }
 
 // ActionRequest dispatches an opaque action payload to the actions backend
@@ -538,9 +583,13 @@ type DeviceWDAConfig struct {
 // socket of the mirrord GUI helper that drives macOS iPhone Mirroring
 // (empty = the daemon's default, ~/.manzanasd/mirrord.sock). The mirror
 // is exclusive global state (one phone per Mac), so a config holds at
-// most one mirror-backed device. Additive (v0).
+// most one mirror-backed device. AllowInput opts the device into
+// mutating (input) mirror actions; the default is fail-closed — a
+// mirror without allow_input is read-only (observe/screenshot/wait_*
+// only) and input kinds return `forbidden`. Additive (v0).
 type DeviceMirrorConfig struct {
-	Socket string `json:"socket,omitempty"`
+	Socket     string `json:"socket,omitempty"`
+	AllowInput bool   `json:"allow_input,omitempty"`
 }
 
 // DevicesConfig is the runtime device configuration: whether physical
@@ -561,6 +610,7 @@ const (
 	ErrNotImplemented  = "not_implemented"
 	ErrBadRequest      = "bad_request"
 	ErrLeaseExpired    = "lease_expired"
+	ErrLeasePaused     = "lease_paused"      // the lease is paused for human preemption; resume it to dispatch actions
 	ErrNoMatch         = "no_match"          // no target matches the requested labels
 	ErrStreamLimit     = "stream_limit"      // the streamer is at its configured capacity
 	ErrViewerLimit     = "viewer_limit"      // the stream is at its configured viewer capacity
@@ -573,7 +623,9 @@ const (
 	ErrOffViewport     = "off_viewport"      // an element action's tap point lies outside the device viewport
 	ErrAmbiguousMatch  = "ambiguous_match"   // an element predicate matched several elements and no index picked one
 	ErrFocusRequired   = "focus_required"    // a typing action with require_focus found no focused text field (no on-screen keyboard)
+	ErrAssertionFailed = "assertion_failed"  // an assert_* action's postcondition was observed to be false within its budget
 	ErrReadOnly        = "read_only"         // dashboard controls disabled (--dash-readonly)
+	ErrForbidden       = "forbidden"         // the action is disabled by policy (e.g. mirror input without allow_input)
 	ErrUnauthorized    = "unauthorized"      // missing or wrong bearer token on an --auth-token daemon/broker
 	ErrInternal        = "internal"
 )

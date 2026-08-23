@@ -12,7 +12,8 @@
 //   request:  {"id":"1","op":"tap","args":{"x":100,"y":200}}
 //   response: {"id":"1","ok":true,"result":{...}}
 //           | {"id":"1","ok":false,"code":"bad_request","error":"..."}
-// Ops: ping, tap, swipe, button, key, key_sequence, key_combo, describe_ui.
+// Ops: ping, tap, long_press, swipe, button, key, key_sequence, key_combo,
+// describe_ui.
 //
 // Build: see build.sh (links against the FBSimulatorControl frameworks
 // shipped with an AXe install, MIT-licensed).
@@ -157,6 +158,15 @@ final class Bridge {
             }
             try await send(.tapAt(x: x, y: y))
             return ["x": x, "y": y]
+        case "long_press":
+            guard let x = a["x"]?.double, let y = a["y"]?.double else {
+                throw BridgeError.badRequest("long_press requires numeric x and y")
+            }
+            guard let duration = a["duration"]?.double, duration > 0 else {
+                throw BridgeError.badRequest("long_press requires a positive duration (seconds)")
+            }
+            try await send(.tapAt(x: x, y: y, duration: duration))
+            return ["x": x, "y": y, "duration": duration]
         case "swipe":
             guard let sx = a["start_x"]?.double, let sy = a["start_y"]?.double,
                   let ex = a["end_x"]?.double, let ey = a["end_y"]?.double else {

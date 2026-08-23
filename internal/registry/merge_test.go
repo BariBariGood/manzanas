@@ -3,8 +3,10 @@ package registry
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
+	"github.com/BariBariGood/manzanas/internal/actions/mirror"
 	"github.com/BariBariGood/manzanas/proto"
 )
 
@@ -90,5 +92,152 @@ func TestMergedRoutesPerUDID(t *testing.T) {
 
 	if st, err := m.Health(ctx, "00008027-000000000000002B"); err != nil || st != proto.StateBooted {
 		t.Fatalf("device health: %q %v", st, err)
+	}
+}
+
+// mirrorOverlayFixture merges the devicectl fixture with a mirror
+// registry claiming the fixture's disconnected phone plus a UDID
+// devicectl does not know.
+func mirrorOverlayFixture(t *testing.T, states map[string]mirror.Status) *MergedRegistry {
+	t.Helper()
+	mr := NewMirror(func(ctx context.Context, socket string) (mirror.Status, error) {
+		st, ok := states[socket]
+		if !ok {
+			return mirror.Status{}, errors.New("mirrord unreachable")
+		}
+		return st, nil
+	})
+	mr.SetMirrors(map[string]string{
+		"00008130-000000000000001A": "/tmp/phone.sock",
+		"MIRROR-ONLY":               "/tmp/only.sock",
+	})
+	return Merge(fixtureDevicectl(t), mr)
+}
+
+func TestMergedListOverlaysMirrorOntoDevicectl(t *testing.T) {
+	m := mirrorOverlayFixture(t, map[string]mirror.Status{
+		"/tmp/phone.sock": {State: "ready"},
+		"/tmp/only.sock":  {State: "ready"},
+	})
+	targets, err := m.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 3 {
+		t.Fatalf("got %d targets, want 3 (dedup by UDID): %+v", len(targets), targets)
+	}
+	byUDID := map[string]proto.Target{}
+	for _, tg := range targets {
+		byUDID[tg.UDID] = tg
+	}
+
+	// devicectl metadata wins; mirror supplies liveness. The phone's
+	// tunnel is down in the fixture, so "disconnected" becomes
+	// "no-tunnel" while the mirror's ready state makes it Booted.
+	phone := byUDID["00008130-000000000000001A"]
+	if phone.Name != "test-iphone" || phone.DeviceType != "iPhone 15 Pro" {
+		t.Fatalf("devicectl metadata lost: %+v", phone)
+	}
+	if phone.State != proto.StateBooted {
+		t.Fatalf("mirror liveness lost: state = %q", phone.State)
+	}
+	for _, want := range []string{MirrorLabel, NoTunnelLabel, "iphone-15-pro"} {
+		if !slices.Contains(phone.Labels, want) {
+			t.Fatalf("phone labels missing %q: %v", want, phone.Labels)
+		}
+	}
+	for _, banned := range []string{DisconnectedLabel, NoDevicectlLabel} {
+		if slices.Contains(phone.Labels, banned) {
+			t.Fatalf("phone labels carry %q: %v", banned, phone.Labels)
+		}
+	}
+
+	// A mirror UDID unknown to devicectl is synthesized.
+	only := byUDID["MIRROR-ONLY"]
+	if only.Kind != proto.TargetDevice || only.State != proto.StateBooted || only.Name != "iPhone (mirror)" {
+		t.Fatalf("synthesized target = %+v", only)
+	}
+	if !slices.Contains(only.Labels, NoDevicectlLabel) {
+		t.Fatalf("synthesized target missing %q: %v", NoDevicectlLabel, only.Labels)
+	}
+
+	// The connected iPad has no mirror entry and is untouched.
+	pad := byUDID["00008027-000000000000002B"]
+	if pad.State != proto.StateBooted || slices.Contains(pad.Labels, MirrorLabel) {
+		t.Fatalf("non-mirror device changed: %+v", pad)
+	}
+}
+
+func TestMergedListMirrorUnreachableStaysDisconnected(t *testing.T) {
+	// mirrord unreachable: liveness pessimism wins even though the
+	// synthesized entry still enumerates.
+	m := mirrorOverlayFixture(t, map[string]mirror.Status{})
+	targets, err := m.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUDID := map[string]proto.Target{}
+	for _, tg := range targets {
+		byUDID[tg.UDID] = tg
+	}
+	phone := byUDID["00008130-000000000000001A"]
+	if phone.State != proto.StateUnknown {
+		t.Fatalf("unreachable mirror should leave state Unknown: %+v", phone)
+	}
+	for _, want := range []string{DisconnectedLabel, NoTunnelLabel, MirrorLabel} {
+		if !slices.Contains(phone.Labels, want) {
+			t.Fatalf("phone labels missing %q: %v", want, phone.Labels)
+		}
+	}
+}
+
+func TestMergedGetOverlaysMirror(t *testing.T) {
+	m := mirrorOverlayFixture(t, map[string]mirror.Status{
+		"/tmp/phone.sock": {State: "blocked"},
+		"/tmp/only.sock":  {State: "ready"},
+	})
+	ctx := context.Background()
+	tg, err := m.Get(ctx, "00008130-000000000000001A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.Name != "test-iphone" || tg.State != proto.StateBooted || !slices.Contains(tg.Labels, MirrorBlockedLabel) {
+		t.Fatalf("Get overlay = %+v", tg)
+	}
+	if st, err := m.Health(ctx, "00008130-000000000000001A"); err != nil || st != proto.StateBooted {
+		t.Fatalf("health = %q, %v", st, err)
+	}
+	// Boot still routes to the first owner (devicectl) and refuses.
+	var be *DeviceBootError
+	if err := m.Boot(ctx, "00008130-000000000000001A"); !errors.As(err, &be) {
+		t.Fatalf("boot: got %v, want DeviceBootError", err)
+	}
+}
+
+func TestMergedListAllFallibleFailingSurfacesError(t *testing.T) {
+	// A supplemental registry (mirror: List never fails) must not hide a
+	// total outage of every fallible source behind an empty success.
+	mr := NewMirror(func(ctx context.Context, socket string) (mirror.Status, error) {
+		return mirror.Status{State: "ready"}, nil
+	})
+	mr.SetMirrors(map[string]string{"MIRROR-ONLY": "/tmp/only.sock"})
+	if _, err := Merge(failingRegistry{}, failingRegistry{}, mr).List(context.Background()); err == nil {
+		t.Fatal("all fallible registries failing should surface an error")
+	}
+	// With one fallible source healthy, the merge degrades gracefully and
+	// mirror targets still enumerate.
+	sims := NewMock()
+	ts, err := Merge(sims, failingRegistry{}, mr).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tg := range ts {
+		if tg.UDID == "MIRROR-ONLY" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mirror target missing from degraded list: %+v", ts)
 	}
 }

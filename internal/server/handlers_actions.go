@@ -33,12 +33,48 @@ func actionStatus(code string) int {
 		return http.StatusConflict
 	case proto.ErrFocusRequired:
 		return http.StatusPreconditionFailed
+	case proto.ErrAssertionFailed:
+		return http.StatusExpectationFailed
+	case proto.ErrForbidden:
+		return http.StatusForbidden
+	case proto.ErrLeasePaused:
+		return http.StatusConflict
 	case proto.ErrNotImplemented:
 		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
 	}
 }
+
+// pausedAllowedKinds are the read-only action kinds still dispatchable on
+// a paused lease, so the holder can watch the human's progress without
+// touching the device.
+var pausedAllowedKinds = map[string]bool{
+	"observe":    true,
+	"screenshot": true,
+}
+
+// journalParams elides bulky inline image blobs from the journaled
+// payload: the journal skips lines over its read cap, so an entry
+// carrying a multi-megabyte template_base64 would vanish from reads,
+// tails, and exports (and bloat retention) if stored verbatim.
+func journalParams(p map[string]any) map[string]any {
+	b64, ok := p["template_base64"].(string)
+	if !ok {
+		return p
+	}
+	out := make(map[string]any, len(p))
+	for k, v := range p {
+		out[k] = v
+	}
+	out["template_base64"] = journal.ElideBlob(len(b64))
+	return out
+}
+
+// journalExtraKeys is the whitelist of action-result keys lifted
+// verbatim into journal Event.Extra: additive provenance/verification
+// fields other slices ride (journal/v0 readers ignore unknown keys).
+var journalExtraKeys = []string{"resolver", "resolver_skipped", "input_mode", "verified", "verify", "fingerprint"}
 
 // dispatchAction validates the lease and runs the action, returning the
 // result or a wire error. Shared by the HTTP and WS surfaces.
@@ -60,10 +96,26 @@ func (s *Server) dispatchAction(ctx context.Context, req proto.ActionRequest) (p
 	if l.TargetUDID == "" {
 		return proto.ActionResult{}, &proto.Error{Code: proto.ErrBadRequest, Message: "lease holds no target"}
 	}
-	res, err := s.actions.Dispatch(ctx, l.TargetUDID, req)
+	if l.Paused && !pausedAllowedKinds[req.Kind] {
+		msg := "lease is paused"
+		if l.PausedReason != "" {
+			msg += " (" + l.PausedReason + ")"
+		}
+		msg += ": only read-only observation is allowed until POST /v0/leases/{id}/resume"
+		return proto.ActionResult{}, &proto.Error{Code: proto.ErrLeasePaused, Message: msg}
+	}
+	// The lease ID rides the context so backend policy scoped to one
+	// lease (the resolver ladder's AX circuit breaker) can key on it.
+	actx := actions.WithLeaseID(ctx, l.ID)
+	if s.journal.Store() != nil {
+		// A journal store can keep escalation screenshots, so the
+		// resolver ladder is allowed to spend time capturing them.
+		actx = actions.WithEvidenceSink(actx)
+	}
+	res, err := s.actions.Dispatch(actx, l.TargetUDID, req)
 	ev := journal.Event{
 		Kind: "action", LeaseID: l.ID, AgentID: l.AgentID, Action: req.Kind,
-		Params: req.Payload, Status: "ok",
+		Params: journalParams(req.Payload), Status: "ok",
 	}
 	if err != nil {
 		wireErr := actions.WireError(err)
@@ -74,6 +126,20 @@ func (s *Server) dispatchAction(ctx context.Context, req proto.ActionRequest) (p
 			// guessing. See PROTOCOL.md §1 (error detail).
 			wireErr.Detail = s.targetDownDetail(l.TargetUDID)
 			ev.Extra = map[string]any{"udid": l.TargetUDID, "detail": wireErr.Detail}
+		}
+		// A resolver-ladder escalation carries an observation bundle
+		// (rung trail + last text boxes + screenshot): journal it as
+		// evidence so the escalating agent has something to re-plan on.
+		if bundle, png := actions.EscalationEvidence(err); bundle != nil {
+			if ev.Extra == nil {
+				ev.Extra = map[string]any{}
+			}
+			ev.Extra["escalation"] = bundle
+			if store := s.journal.Store(); store != nil && len(png) > 0 {
+				if ref, aerr := store.PutArtifact(ev.LeaseID, "escalation.png", bytes.NewReader(png)); aerr == nil {
+					ev.Artifacts = append(ev.Artifacts, ref)
+				}
+			}
 		}
 		ev.Status, ev.Error = "error", err.Error()
 		s.journal.Record(ctx, ev)
@@ -97,6 +163,16 @@ func (s *Server) dispatchAction(ctx context.Context, req proto.ActionRequest) (p
 		s.journalAudit(res.Result, req.Payload, &ev)
 	}
 	s.journalLogs(res.Result, &ev)
+	// Lift whitelisted cross-slice result keys (resolution provenance,
+	// verification, fingerprints) into the journal entry verbatim.
+	for _, k := range journalExtraKeys {
+		if v, ok := res.Result[k]; ok {
+			if ev.Extra == nil {
+				ev.Extra = map[string]any{}
+			}
+			ev.Extra[k] = v
+		}
+	}
 	if ref := s.journal.Record(ctx, ev); ref.RunID != "" && res.JournalRef == nil {
 		res.JournalRef = &ref
 	}

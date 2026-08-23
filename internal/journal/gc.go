@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// templatesDirName is reserved for the cross-run template library
+// (internal/templates). Its canonical home is BESIDE the journal root
+// (e.g. ~/.manzanasd/templates), but if a deployment roots it inside the
+// journal directory the GC must never treat it as a run and sweep it:
+// templates are cross-run state with no age/size bound here.
+const templatesDirName = "templates"
+
 // GCConfig bounds the journal's disk usage. Zero values disable a bound.
 type GCConfig struct {
 	MaxAge   time.Duration // runs untouched longer than this are removed
@@ -35,7 +42,7 @@ func (s *FileStore) GC(cfg GCConfig) ([]string, error) {
 	}
 	var runs []run
 	for _, d := range dirs {
-		if !d.IsDir() {
+		if !d.IsDir() || d.Name() == templatesDirName {
 			continue
 		}
 		r := run{id: d.Name()}

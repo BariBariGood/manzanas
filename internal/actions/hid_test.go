@@ -196,6 +196,43 @@ func TestLaunchAppPidIsNumber(t *testing.T) {
 	}
 }
 
+// A tap with duration_ms is a real long-press: touch-down, hold, touch-up
+// (AXe's touch subcommand on the cold path). The result echoes the
+// duration and carries no capability note.
+func TestTapDurationLongPress(t *testing.T) {
+	f := newFakeRunner()
+	res, err := dispatch(t, testBackend(f), "tap", map[string]any{"x": 1.0, "y": 2.0, "duration_ms": 500.0})
+	if err != nil {
+		t.Fatalf("tap with duration_ms: %v", err)
+	}
+	if _, ok := res.Result["note"]; ok {
+		t.Fatalf("result = %+v, long-press must not carry the plain-tap note", res.Result)
+	}
+	if d, _ := res.Result["duration_ms"].(float64); d != 500 {
+		t.Fatalf("duration_ms = %v, want 500", res.Result["duration_ms"])
+	}
+	want := "/fake/axe touch -x 1 -y 2 --down --up --delay 0.5 --udid TEST-UDID"
+	if got := f.argvs(); len(got) != 1 || got[0] != want {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
+}
+
+// The long-press bound matches the mirror backend: 1–10000ms, rejected
+// before any input reaches the simulator.
+func TestTapDurationValidation(t *testing.T) {
+	for _, dur := range []any{0.0, -100.0, 10001.0, "long"} {
+		f := newFakeRunner()
+		_, err := dispatch(t, testBackend(f), "tap", map[string]any{"x": 1.0, "y": 2.0, "duration_ms": dur})
+		var ae *Error
+		if !errors.As(err, &ae) || ae.Code != proto.ErrBadRequest {
+			t.Fatalf("duration_ms=%v: want bad_request, got %v", dur, err)
+		}
+		if len(f.argvs()) != 0 {
+			t.Fatalf("duration_ms=%v: invalid request still ran commands: %q", dur, f.argvs())
+		}
+	}
+}
+
 func TestCommandFailureIsInternal(t *testing.T) {
 	f := newFakeRunner()
 	f.errs["tap"] = "simulator not booted"

@@ -37,6 +37,16 @@ type RunSpec struct {
 	Artifacts RunArtifacts `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
 	// Timeouts bound the run's stages; zero values use daemon defaults.
 	Timeouts RunTimeouts `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
+	// StrictDrift fails the run when any step's expect block detects
+	// drift; the default only marks the step drifted and caps the run's
+	// verdict at "degraded".
+	StrictDrift bool `json:"strict_drift,omitempty" yaml:"strict_drift,omitempty"`
+	// RecordExpectations journals a post-step observation (masked text
+	// set + screen DHash) after every successful mutating step, so
+	// `manzanas journal to-spec --with-expectations` can emit expect
+	// blocks for a later replay. Costs one observe + one screenshot per
+	// mutating step; requires journaling.
+	RecordExpectations bool `json:"record_expectations,omitempty" yaml:"record_expectations,omitempty"`
 }
 
 // RunTarget is the run's target requirement: which target to lease and
@@ -105,6 +115,31 @@ type RunStep struct {
 	// a run containing a maestro_flow step is refused with
 	// not_implemented (see docs/runs.md).
 	MaestroFlow string `json:"maestro_flow,omitempty" yaml:"maestro_flow,omitempty"`
+	// Expect declares the post-step drift check (docs/runs.md): after
+	// this step succeeds the engine re-observes the screen and compares
+	// it against the expectation.
+	Expect *RunExpect `json:"expect,omitempty" yaml:"expect,omitempty"`
+}
+
+// RunExpect is a step's expected post-state, checked after the step
+// succeeds. A mismatch marks the step's result drifted and caps the run
+// verdict at "degraded" (or fails the run under spec strict_drift). At
+// least one of Texts or Fingerprint is required.
+type RunExpect struct {
+	// Texts is the screen's expected masked text set (normalized visible
+	// text runs). Compared with Jaccard overlap against the live
+	// observation's text set.
+	Texts []string `json:"texts,omitempty" yaml:"texts,omitempty"`
+	// JaccardMin is the minimum acceptable Jaccard overlap between the
+	// expected and observed text sets, in (0, 1]. 0 uses the default 0.7.
+	JaccardMin float64 `json:"jaccard_min,omitempty" yaml:"jaccard_min,omitempty"`
+	// Fingerprint is the expected screen DHash as 16 hex digits
+	// (imgutil.DHash over the masked capture).
+	Fingerprint string `json:"fingerprint,omitempty" yaml:"fingerprint,omitempty"`
+	// MaxHashDistance is the maximum acceptable Hamming distance from
+	// Fingerprint (0–64). Nil uses the default 10; an explicit 0 demands
+	// an identical hash.
+	MaxHashDistance *int `json:"max_hash_distance,omitempty" yaml:"max_hash_distance,omitempty"`
 }
 
 // RunArtifacts declares run-level artifact expectations. Per-step evidence
@@ -167,7 +202,33 @@ type RunStepResult struct {
 	DurationMS int64         `json:"duration_ms,omitempty"`
 	// JournalRef points at the step's journal entry when journaling is on.
 	JournalRef *JournalRef `json:"journal_ref,omitempty"`
+	// Verified mirrors the action's opt-in verification report (the
+	// verify:true payload flag on tap/swipe): true = the postcondition
+	// was observed to change, false = it was checked and did not. Nil
+	// when the step carried no verification.
+	Verified *bool `json:"verified,omitempty"`
+	// Drifted reports that the step's expect block did not match the
+	// post-step observation; DriftDetail says what mismatched.
+	Drifted     bool   `json:"drifted,omitempty"`
+	DriftDetail string `json:"drift_detail,omitempty"`
 }
+
+// RunVerdict grades how much of a finished run was actually verified,
+// independent of passed/failed (PROTOCOL.md §9, docs/runs.md).
+type RunVerdict string
+
+const (
+	// VerdictTrusted: every mutating step's postcondition was verified
+	// (verified:true, or a following passing assert step) and nothing
+	// drifted.
+	VerdictTrusted RunVerdict = "trusted"
+	// VerdictDegraded: verification signals exist but are incomplete or
+	// negative — some mutating steps unverified, a verified:false
+	// report, a failed assert, or drift.
+	VerdictDegraded RunVerdict = "degraded"
+	// VerdictUnverified: the run carried no verification signals at all.
+	VerdictUnverified RunVerdict = "unverified"
+)
 
 // Run is the run resource returned by POST /v0/runs and GET /v0/runs/{id}.
 type Run struct {
@@ -184,6 +245,9 @@ type Run struct {
 	// "fixtures", "install", "launch", "steps", "artifacts", "release".
 	Stage string          `json:"stage,omitempty"`
 	Steps []RunStepResult `json:"steps,omitempty"`
+	// Verdict grades the finished run's verification coverage:
+	// trusted | degraded | unverified. Empty until the steps stage ran.
+	Verdict RunVerdict `json:"verdict,omitempty"`
 	// Error is the failure that ended the run (stage failures; the first
 	// failing step's error is also mirrored here).
 	Error      *Error     `json:"error,omitempty"`

@@ -24,11 +24,14 @@ type fakeDaemon struct {
 	// actionsNotImplemented makes /v0/actions return 501 like the
 	// foundation daemon.
 	actionsNotImplemented bool
+	// doctorFail makes /v0/doctor report a failing capture check.
+	doctorFail bool
 }
 
 type recordedRequest struct {
 	Method string
 	Path   string
+	Query  string
 	Body   map[string]any
 }
 
@@ -173,6 +176,22 @@ func newFakeDaemon() *fakeDaemon {
 		writeStatus(w, http.StatusCreated, map[string]any{"artifact": map[string]any{
 			"path": "artifacts/deadbeef.png", "sha256": "deadbeef", "bytes": len(data)}})
 	})
+	mux.HandleFunc("GET /v0/doctor", func(w http.ResponseWriter, r *http.Request) {
+		f.record(r, nil)
+		checks := []proto.DoctorCheck{
+			{Name: "daemon", Status: proto.DoctorOK, Detail: "manzanasd test (protocol v0)"},
+			{Name: "devices", Status: proto.DoctorNA, Detail: "no physical devices configured"},
+		}
+		ok := true
+		if f.doctorFail {
+			ok = false
+			checks = append(checks, proto.DoctorCheck{
+				Name: "mirror:PHONE:capture", Status: proto.DoctorFail,
+				Detail: "no capture backend",
+				Remedy: "grant Screen Recording to /usr/local/bin/mirrord"})
+		}
+		writeOK(w, proto.DoctorReport{OK: ok, Build: "test", Protocol: "v0", Checks: checks})
+	})
 	f.Server = httptest.NewServer(mux)
 	return f
 }
@@ -183,7 +202,8 @@ func (f *fakeDaemon) record(r *http.Request, body interface{ Read([]byte) (int, 
 		_ = json.NewDecoder(r.Body).Decode(&m)
 	}
 	f.mu.Lock()
-	f.requests = append(f.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Body: m})
+	f.requests = append(f.requests, recordedRequest{Method: r.Method, Path: r.URL.Path,
+		Query: r.URL.RawQuery, Body: m})
 	f.mu.Unlock()
 	return m
 }

@@ -103,6 +103,14 @@ the payload keys `run` / `name`). Payload keys:
 | `error` | on error | error message |
 | `ax_before` / `ax_after` | when the actions backend provides them | a11y tree hashes around the action (HID actions: opt-in via payload `ax_hashes: true`; an `observe`'s tree hash is recorded as `ax_after`) |
 | `artifacts` | when present | list of `{path, sha256, bytes}` refs into `artifacts/` |
+| `resolver` | element actions via the resolver ladder | resolution provenance: the rung that resolved the element (`"ax"`, `"ocr"`, ...) |
+| `resolver_skipped` | when a rung was circuit-skipped | e.g. `"ax(circuit-open)"` (see [resolver-ladder.md](resolver-ladder.md)) |
+| `verified` / `fingerprint` | when the actions backend provides them | post-action verification outcome / screen fingerprint (lifted from results like `resolver`) |
+| `input_mode` / `verify` | mirror-backed input actions (including the element composites) | how the gesture was delivered (`background`/`focused`) and how it was checked (`pixel-delta`/`off`/`unavailable`) |
+| `escalation` | element-resolution timeout | compact observation bundle: per-rung outcome trail + last observed text boxes; a best-effort `escalation.png` screenshot is stored as a run artifact |
+
+These fields are additive within journal/v0 — readers that don't know
+them can ignore them.
 
 Artifacts are content-addressed (`<sha256><ext>`) and referenced by
 run-relative path, so entries stay valid across copies of the run dir and
@@ -172,6 +180,54 @@ store directly, so evidence can be exported after the daemon has stopped
 (or from a copied run directory). `GET /v0/journal/{run}/export.md`
 returns the same markdown over HTTP, and MCP agents get it via the
 `journal_export` tool.
+
+## Exporting a replayable run-spec (record → replay)
+
+`manzanas journal to-spec` turns a journaled run back into the declarative
+YAML run-spec `manzanas run` consumes (docs/runs.md): each seq-ordered
+`action`-kind entry whose action is a PROTOCOL.md §5 action kind becomes a
+`steps:` entry (`action` = the kind, `with` = the recorded params,
+verbatim), and the run's determinism meta becomes the `target:`
+requirement — runtime + device type when the meta recorded them (portable
+across hosts), else a UDID pin. The emitted document is re-parsed through
+the strict run-spec parser before it is written, so it always round-trips.
+
+```sh
+manzanas journal to-spec $RUN_ID                   # YAML to stdout
+manzanas journal to-spec $RUN_ID -o replay.yaml    # write to a file
+manzanas journal to-spec $RUN_ID --journal-dir ~/.manzanasd/journal  # offline
+manzanas run replay.yaml                           # replay it
+```
+
+Filtering defaults, and the flags that change them:
+
+- **Pure-read kinds are dropped** — `observe`, `ui_tree`, `screenshot`,
+  `audit`, `pasteboard_get`, `wait_for_element`, `wait_tree_stable`,
+  `wait_for_stable` observe
+  state without mutating it, so a replay doesn't need to re-issue them.
+  `--keep-observations` keeps them (e.g. as verification anchors).
+- **The spec stops just before the first failed step** — replaying a step
+  that already failed once usually re-fails. `--include-failed` keeps the
+  failed step and everything after it.
+- **Lifecycle entries are never emitted as steps** — `lease`/`run` kind
+  entries and dotted protocol methods journaled as actions (e.g.
+  `targets.boot`) are re-performed by the runs engine itself.
+- **State ops are dropped with a warning** — `state`-kind entries
+  (fixtures, snapshot/restore/erase) cannot be reconstructed: the journal
+  records their names but not their payloads, and `target.fixtures` /
+  `target.reset` are not derivable from the entry stream. When a run
+  recorded any, the emitted YAML starts with a `# WARNING:` header listing
+  them — re-seed equivalent state in the spec before replaying.
+
+- **Expect blocks are opt-in** — `--with-expectations` attaches an
+  `expect` block (masked text set + DHash fingerprint, docs/runs.md) to
+  each exported step from the run's recorded `runs.step_expectation`
+  observations. Requires the run to have been recorded with
+  `record_expectations: true` in its spec; steps without a usable
+  observation are exported without one.
+
+Coordinate-only taps are exported as-is (raw `x`/`y`); anchoring them to
+screen templates is a planned follow-up.
 
 Sample output:
 

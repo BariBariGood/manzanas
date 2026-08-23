@@ -19,7 +19,7 @@ For local development against an unreleased binary:
 MANZANAS_BINARY_PATH=/path/to/manzanas npm install
 ```
 
-While the GitHub repo is private, set `GITHUB_TOKEN` (or `GH_TOKEN`) with
+If you install from a private checkout, set `GITHUB_TOKEN` (or `GH_TOKEN`) with
 release read access so the postinstall download is authorized.
 
 Not yet published to npm, and the postinstall needs a published GitHub

@@ -24,6 +24,8 @@ const (
 	MethodRenewLease   = "leases.renew"
 	MethodReleaseLease = "leases.release"
 	MethodGetLease     = "leases.get"
+	MethodPauseLease   = "leases.pause"
+	MethodResumeLease  = "leases.resume"
 	MethodBootTarget   = "targets.boot"
 	MethodShutdown     = "targets.shutdown"
 	MethodAction       = "actions.dispatch"
@@ -58,6 +60,10 @@ const (
 	// expires_at and entered the renewal grace window (grace_until is
 	// set on the payload): renew now or the lease expires for real.
 	EventLeaseExpiring = "lease.expiring"
-	EventTargetState   = "target.state"  // a target changed state
-	EventJournalEntry  = "journal.entry" // one journal entry, on a journal.tail subscription
+	// EventLeasePaused/EventLeaseResumed mark an active lease being
+	// paused for human preemption (actions blocked) and resumed.
+	EventLeasePaused  = "lease.paused"
+	EventLeaseResumed = "lease.resumed"
+	EventTargetState  = "target.state"  // a target changed state
+	EventJournalEntry = "journal.entry" // one journal entry, on a journal.tail subscription
 )

@@ -22,9 +22,10 @@ Usage: manzanas [--daemon ADDR] [--token TOKEN] [--json] <command> [args]
 
 Commands:
   targets                              list targets
-  lease acquire|wait|renew|release|ls  manage leases (acquire --wait queues)
+  lease acquire|wait|renew|pause|resume|release|ls  manage leases (acquire --wait queues)
   boot|shutdown UDID                   boot/shut down a leased target
   tap|swipe|type|button                HID actions (require --lease)
+  scroll X Y DY                        wheel-scroll at a point (mirror-backed devices)
   observe                              compact a11y tree
   tap-element                          find an element by matcher/predicate and tap it
   type-into-element TEXT               find an element, focus it, and type into it
@@ -40,9 +41,16 @@ Commands:
   journal tail RUN_ID                  print (or --follow) the run journal
   journal upload RUN_ID FILE...        upload evidence artifacts to a run
   journal export RUN_ID                PR-ready evidence summary (--format md|json)
+  journal to-spec RUN_ID               export a run as a replayable YAML run-spec
+  templates ls                         list the daemon's saved UI templates
+  templates rm BUNDLE_ID NAME          delete saved templates (--class scopes one device class)
+  elementmap ls                        list the daemon's learned element map
+  elementmap rm BUNDLE_ID NAME         delete learned elements (--class scopes one device class)
   fleet hosts|placements|hints         broker fleet views (--daemon BROKER)
   device onboard UDID                  build+sign WDA and wire a physical phone into the daemon
   device config                        show the daemon's runtime device config
+  doctor                               diagnose the host's setup (--target UDID scopes device checks)
+  setup                                guided host setup: install helpers, walk TCC grants (--report: detect only)
   mcp                                  serve MCP tools over stdio
   version                              print the client version
 
@@ -64,6 +72,7 @@ var commands = map[string]command{
 	"shutdown": cmdShutdownTarget,
 	"tap":      cmdTap,
 	"swipe":    cmdSwipe,
+	"scroll":   cmdScroll,
 	"type":     cmdType,
 	"button":   cmdButton,
 	"observe":  cmdObserve,
@@ -81,7 +90,11 @@ var commands = map[string]command{
 	"record":     cmdRecord,
 	"stream":     cmdStream,
 	"journal":    cmdJournal,
+	"templates":  cmdTemplates,
+	"elementmap": cmdElementMap,
 	"device":     cmdDevice,
+	"doctor":     cmdDoctor,
+	"setup":      cmdSetup,
 	"fleet":      cmdFleet,
 	"mcp":        cmdMCP,
 }

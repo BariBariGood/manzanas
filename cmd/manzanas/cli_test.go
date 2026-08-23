@@ -132,6 +132,14 @@ func TestActionCommandsMapToDispatch(t *testing.T) {
 	}{
 		{[]string{"tap", "100", "200", "--lease", "lse_test"}, "tap",
 			map[string]any{"x": float64(100), "y": float64(200)}},
+		{[]string{"tap", "100", "200", "--duration-ms", "800", "--lease", "lse_test"}, "tap",
+			map[string]any{"x": float64(100), "y": float64(200), "duration_ms": float64(800)}},
+		{[]string{"scroll", "300", "650", "-120", "--lease", "lse_test"}, "scroll",
+			map[string]any{"x": float64(300), "y": float64(650), "dy": float64(-120)}},
+		{[]string{"scroll", "--", "300", "650", "-120", "--lease", "lse_test"}, "scroll",
+			map[string]any{"x": float64(300), "y": float64(650), "dy": float64(-120)}},
+		{[]string{"tap", "--", "100", "200", "--duration-ms", "800", "--lease", "lse_test"}, "tap",
+			map[string]any{"x": float64(100), "y": float64(200), "duration_ms": float64(800)}},
 		{[]string{"swipe", "10", "20", "30", "40", "--duration-ms", "250", "--lease", "lse_test"}, "swipe",
 			map[string]any{"start_x": float64(10), "start_y": float64(20), "end_x": float64(30), "end_y": float64(40), "duration_seconds": float64(0.25)}},
 		{[]string{"type", "hello world", "--lease", "lse_test"}, "type",
@@ -160,6 +168,26 @@ func TestActionCommandsMapToDispatch(t *testing.T) {
 			if payload[k] != want {
 				t.Fatalf("%v: payload[%s]=%v want %v", tc.args, k, payload[k], want)
 			}
+		}
+	}
+}
+
+func TestActionArgErrors(t *testing.T) {
+	f := newFakeDaemon()
+	defer f.Close()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"tap", "100", "200", "--duration-ms", "-5", "--lease", "lse_test"},
+			"--duration-ms must be positive"},
+		{[]string{"type", "-oops", "--lease", "lse_test"},
+			"positional arguments must come before flags"},
+	}
+	for _, tc := range cases {
+		_, _, err := runCLI(t, f, false, tc.args...)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%v: err = %v, want %q", tc.args, err, tc.want)
 		}
 	}
 }

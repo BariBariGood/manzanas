@@ -70,9 +70,12 @@ func ParseBackends(spec string) (map[string]string, error) {
 
 // FromFlags assembles a DevicesConfig from the classic flag pile
 // (--devices, --device-wda, --device-wda-launch, --device-wda-forward,
-// --device-backend, --device-mirror-socket), kept for backwards
-// compatibility with pre-config-file deployments.
-func FromFlags(enabled bool, wdaSpec, launchSpec, forwardSpec, backendSpec, mirrorSocket string) (proto.DevicesConfig, error) {
+// --device-backend, --device-mirror-socket,
+// --device-mirror-allow-input), kept for backwards compatibility with
+// pre-config-file deployments. mirrorAllowInput opts mirror-backed
+// devices into input actions; the default is fail-closed (read-only
+// mirror).
+func FromFlags(enabled bool, wdaSpec, launchSpec, forwardSpec, backendSpec, mirrorSocket string, mirrorAllowInput bool) (proto.DevicesConfig, error) {
 	cfg := proto.DevicesConfig{Enabled: enabled, WDA: map[string]proto.DeviceWDAConfig{}}
 	urls, err := ParsePairs("--device-wda", wdaSpec)
 	if err != nil {
@@ -110,7 +113,7 @@ func FromFlags(enabled bool, wdaSpec, launchSpec, forwardSpec, backendSpec, mirr
 		if cfg.Mirror == nil {
 			cfg.Mirror = map[string]proto.DeviceMirrorConfig{}
 		}
-		cfg.Mirror[udid] = proto.DeviceMirrorConfig{Socket: mirrorSocket}
+		cfg.Mirror[udid] = proto.DeviceMirrorConfig{Socket: mirrorSocket, AllowInput: mirrorAllowInput}
 	}
 	return cfg, Validate(cfg)
 }

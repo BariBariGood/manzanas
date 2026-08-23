@@ -57,7 +57,7 @@ func (p TimingProfile) scaleTimeout(d time.Duration) time.Duration {
 
 // waitPayloadKeys are the polling knobs scaled by WaitScale in wait_*
 // action payloads.
-var waitPayloadKeys = map[string]bool{"timeout_ms": true, "interval_ms": true, "for_ms": true}
+var waitPayloadKeys = map[string]bool{"timeout_ms": true, "interval_ms": true, "for_ms": true, "quiet_ms": true}
 
 // maxWaitTimeoutMS mirrors the daemon's maxWaitTimeout clamp
 // (internal/actions/wait.go): timeout_ms above it is silently reduced
@@ -65,11 +65,12 @@ var waitPayloadKeys = map[string]bool{"timeout_ms": true, "interval_ms": true, "
 const maxWaitTimeoutMS = 2 * 60 * 1000
 
 // defaultWaitTimeoutMS mirrors the daemon's per-kind default budget when
-// a wait_* payload omits timeout_ms: wait_tree_stable uses
-// defaultStableTimeout (internal/actions/wait_stable.go), everything
-// else defaultWaitTimeout (internal/actions/wait.go).
+// a wait_* payload omits timeout_ms: wait_tree_stable and
+// wait_for_stable use defaultStableTimeout
+// (internal/actions/wait_stable.go), everything else defaultWaitTimeout
+// (internal/actions/wait.go).
 func defaultWaitTimeoutMS(kind string) float64 {
-	if kind == "wait_tree_stable" {
+	if kind == "wait_tree_stable" || kind == "wait_for_stable" {
 		return 15 * 1000
 	}
 	return 10 * 1000

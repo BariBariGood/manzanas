@@ -337,6 +337,27 @@ func (c *Client) Tap(ctx context.Context, x, y float64) error {
 	return err
 }
 
+// TouchAndHold presses at screen coordinates (points) and holds for the
+// given duration before releasing, via the W3C actions endpoint (POST
+// /actions): pointerDown → pause(duration) → pointerUp. WDA executes the
+// chain synchronously, so the call blocks for the whole press.
+func (c *Client) TouchAndHold(ctx context.Context, x, y float64, d time.Duration) error {
+	_, err := c.inSession(ctx, http.MethodPost, "/actions", map[string]any{
+		"actions": []map[string]any{{
+			"type":       "pointer",
+			"id":         "finger1",
+			"parameters": map[string]any{"pointerType": "touch"},
+			"actions": []map[string]any{
+				{"type": "pointerMove", "duration": 0, "x": x, "y": y},
+				{"type": "pointerDown", "button": 0},
+				{"type": "pause", "duration": d.Milliseconds()},
+				{"type": "pointerUp", "button": 0},
+			},
+		}},
+	})
+	return err
+}
+
 // Keys types text into the focused element (POST /wda/keys).
 func (c *Client) Keys(ctx context.Context, text string) error {
 	_, err := c.inSession(ctx, http.MethodPost, "/wda/keys",
@@ -374,6 +395,28 @@ func (c *Client) Screenshot(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("wda: screenshot base64: %w", err)
 	}
 	return png, nil
+}
+
+// WindowSize returns the foreground window size in points (GET
+// /session/{id}/window/size). It is WebDriver session metadata, not an
+// accessibility snapshot, so it is safe on apps whose /source read
+// crashes the runner.
+func (c *Client) WindowSize(ctx context.Context) (w, h float64, err error) {
+	val, err := c.inSession(ctx, http.MethodGet, "/window/size", nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	var sz struct {
+		Width  float64 `json:"width"`
+		Height float64 `json:"height"`
+	}
+	if err := json.Unmarshal(val, &sz); err != nil {
+		return 0, 0, fmt.Errorf("wda: window size value: %w", err)
+	}
+	if sz.Width <= 0 || sz.Height <= 0 {
+		return 0, 0, fmt.Errorf("wda: window size reported %gx%g", sz.Width, sz.Height)
+	}
+	return sz.Width, sz.Height, nil
 }
 
 // Source returns the element tree as XML. It goes through the session

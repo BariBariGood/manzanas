@@ -1,5 +1,8 @@
 # Eval harness — reproducible agent QA benchmark
 
+*Who this is for: contributors benchmarking determinism/latency claims.
+Not needed to use manzanas.*
+
 `eval/` is a scenario-driven benchmark harness that proves manzanasd's
 determinism value: it runs scripted protocol scenarios against a real
 daemon N times (fresh lease + reset each run) and reports pass/fail,

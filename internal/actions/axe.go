@@ -7,8 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/BariBariGood/manzanas/internal/elementmap"
+	"github.com/BariBariGood/manzanas/internal/templates"
 	"github.com/BariBariGood/manzanas/proto"
 )
 
@@ -40,6 +43,23 @@ type AXeBackend struct {
 	warmHID func(ctx context.Context, udid, op string, args map[string]any) error
 	// axeDetected marks axePath as explicitly set, skipping auto-detection.
 	axeDetected bool
+	// viewMu guards viewports.
+	viewMu sync.RWMutex
+	// viewports caches each UDID's last observed viewport width (points)
+	// so tap_template can map capture pixels onto tap points without a
+	// fresh a11y snapshot — the source the template path exists to bypass.
+	viewports map[string]float64
+	// templates is the cross-run template library save_template writes
+	// to; nil means the library is not configured (the action returns
+	// "unavailable").
+	templates *templates.Store
+	// emap is the element-map learning/fast-path wiring; nil disables
+	// both the map rung and learning (see resolver_map.go).
+	emap *elementMapper
+	// bundleMu guards bundles, the per-target last-launched bundle id
+	// the element map and the template resolver rung key on.
+	bundleMu sync.RWMutex
+	bundles  map[string]string
 }
 
 // Option configures an AXeBackend.
@@ -59,9 +79,11 @@ func WithTempDir(d string) Option { return func(b *AXeBackend) { b.tempDir = d }
 // and observe actions return an "unavailable" error until it is installed.
 func NewAXe(opts ...Option) *AXeBackend {
 	b := &AXeBackend{
-		runner:  ExecRunner{},
-		xcrun:   "xcrun",
-		tempDir: os.TempDir(),
+		runner:    ExecRunner{},
+		xcrun:     "xcrun",
+		tempDir:   os.TempDir(),
+		bundles:   map[string]string{},
+		viewports: map[string]float64{},
 	}
 	for _, o := range opts {
 		o(b)
@@ -72,6 +94,7 @@ func NewAXe(opts ...Option) *AXeBackend {
 	b.handlers = map[string]handlerFunc{
 		"tap":               handleTap,
 		"swipe":             handleSwipe,
+		"scroll":            handleScroll,
 		"type":              handleType,
 		"button":            handleButton,
 		"key":               handleKey,
@@ -79,18 +102,69 @@ func NewAXe(opts ...Option) *AXeBackend {
 		"tap_element":       handleTapElement,
 		"type_into_element": handleTypeIntoElement,
 		"scroll_to_element": handleScrollToElement,
+		"scroll_until":      handleScrollUntil,
+		"scroll_collect":    handleScrollCollect,
 		"observe":           handleObserve,
 		"wait_for_element":  handleWaitForElement,
 		"wait_tree_stable":  handleWaitTreeStable,
+		"assert_text":       handleAssertText,
+		"assert_no_text":    handleAssertNoText,
+		"assert_template":   handleAssertTemplate,
+		"tap_template":      handleTapTemplate,
+		"wait_for_stable":   handleWaitPixelStable,
 		"pasteboard_get":    handlePasteboardGet,
 		"pasteboard_set":    handlePasteboardSet,
 		"screenshot":        handleScreenshot,
+		"save_template":     handleSaveTemplate,
 		"audit":             handleAudit,
 		"install_app":       handleInstallApp,
 		"launch_app":        handleLaunchApp,
 		"terminate_app":     handleTerminateApp,
 	}
 	return b
+}
+
+// SetTemplateStore wires the template library save_template writes to;
+// nil leaves the action "unavailable".
+func (b *AXeBackend) SetTemplateStore(st *templates.Store) { b.templates = st }
+
+// SetElementMapStore wires the element map (learning + the resolver
+// ladder's "map" fast-path rung); nil disables both.
+func (b *AXeBackend) SetElementMapStore(st *elementmap.Store) {
+	if st == nil {
+		b.emap = nil
+		return
+	}
+	b.emap = &elementMapper{store: st, capture: b.capturePNG, bundle: b.launchedBundle}
+}
+
+// noteLaunchedBundle records the bundle last launched on a target, the
+// key the element map groups learned elements with and the template
+// resolver rung scopes its store lookups with.
+func (b *AXeBackend) noteLaunchedBundle(udid, bundleID string) {
+	b.bundleMu.Lock()
+	if b.bundles == nil {
+		b.bundles = map[string]string{}
+	}
+	b.bundles[udid] = bundleID
+	b.bundleMu.Unlock()
+}
+
+func (b *AXeBackend) launchedBundle(udid string) string {
+	b.bundleMu.RLock()
+	defer b.bundleMu.RUnlock()
+	return b.bundles[udid]
+}
+
+// learnElementMap / invalidateElementMap implement elementMapLearner:
+// tap_element / type_into_element record successful non-map resolutions
+// and drop entries whose cached frame steered a failing tap.
+func (b *AXeBackend) learnElementMap(ctx context.Context, udid, name string, n *Node) {
+	b.emap.learn(ctx, udid, name, n)
+}
+
+func (b *AXeBackend) invalidateElementMap(udid, name string) {
+	b.emap.invalidate(udid, name)
 }
 
 // SetWarmObserver installs an accelerated single-poll observer used by
@@ -155,6 +229,7 @@ var hidKinds = map[string]bool{
 	"tap": true, "swipe": true, "type": true, "button": true,
 	"key": true, "key_sequence": true,
 	"tap_element": true, "type_into_element": true, "scroll_to_element": true,
+	"scroll_until": true, "scroll_collect": true, "tap_template": true,
 }
 
 // logKinds are the actions that support opt-in os_log capture around the
@@ -165,6 +240,7 @@ var logKinds = map[string]bool{
 	"tap": true, "swipe": true, "type": true, "button": true,
 	"key": true, "key_sequence": true,
 	"tap_element": true, "type_into_element": true, "scroll_to_element": true,
+	"scroll_until": true, "scroll_collect": true, "tap_template": true,
 	"launch_app": true, "terminate_app": true,
 }
 
@@ -193,12 +269,36 @@ func (b *AXeBackend) Dispatch(ctx context.Context, udid string, req proto.Action
 			return proto.ActionResult{}, err
 		}
 	}
+	// Opt-in pixel verification around tap/swipe: downscaled pre/post
+	// frames compared with a masked mean absolute difference (see
+	// verify.go). Report-only — a false verified bit never fails the
+	// action.
+	var vspec verifySpec
+	if verifyKinds[req.Kind] {
+		var err error
+		if vspec, err = verifySpecFromPayload(req.Payload); err != nil {
+			return proto.ActionResult{}, err
+		}
+		if vspec.enabled {
+			if err := verifyPrecheck(req.Kind, req.Payload); err != nil {
+				return proto.ActionResult{}, err
+			}
+		}
+	}
 	var axBefore string
 	if wantAX {
 		axBefore = b.hashTree(ctx, udid)
 	}
 	start := time.Now()
-	res, err := h(ctx, b, udid, req.Payload)
+	var res map[string]any
+	var err error
+	if vspec.enabled {
+		res, err = runVerified(ctx, vspec, b.captureFrame(udid), func() (map[string]any, error) {
+			return h(ctx, b, udid, req.Payload)
+		})
+	} else {
+		res, err = h(ctx, b, udid, req.Payload)
+	}
 	if err != nil {
 		return proto.ActionResult{}, err
 	}

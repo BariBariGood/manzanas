@@ -9,10 +9,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions/mirror"
 	"github.com/BariBariGood/manzanas/internal/actions/wda"
+	"github.com/BariBariGood/manzanas/internal/elementmap"
 	"github.com/BariBariGood/manzanas/internal/imgutil"
+	"github.com/BariBariGood/manzanas/internal/templates"
 	"github.com/BariBariGood/manzanas/proto"
 )
 
@@ -38,10 +41,28 @@ type DeviceBackend struct {
 	// devices (--device-backend <udid>=mirror). A device is either
 	// WDA-backed or mirror-backed, never both.
 	mirror map[string]*mirror.Client
+	// mirrorInput maps device UDID -> whether mutating (input) mirror
+	// actions are allowed. Fail-closed: a mirror-backed device absent
+	// from this map (or mapped to false) is read-only — input kinds
+	// return `forbidden` while observe/screenshot/wait_* stay allowed.
+	mirrorInput map[string]bool
 	// kick maps device UDID -> supervisor kick: called when a WDA action
 	// fails so the supervisor re-probes (and relaunches) immediately
 	// instead of waiting out its probe interval.
 	kick map[string]func()
+	// bundles maps device UDID -> last launched bundle id, the key the
+	// resolver ladder's AX circuit breaker scopes its state with.
+	bundles map[string]string
+	// axBreak is the per-lease, per-bundle circuit breaker for the AX
+	// resolver rung (see resolver.go).
+	axBreak *axBreaker
+	// templates is the cross-run template library save_template writes
+	// to; nil means the library is not configured (the action returns
+	// "unavailable").
+	templates *templates.Store
+	// emap is the element-map learning/fast-path wiring; nil disables
+	// both the map rung and learning (see resolver_map.go).
+	emap *elementMapper
 }
 
 // DeviceOption configures a DeviceBackend.
@@ -72,6 +93,16 @@ func WithDeviceMirror(clients map[string]*mirror.Client) DeviceOption {
 	}
 }
 
+// WithDeviceMirrorInput opts mirror-backed devices into mutating (input)
+// mirror actions. Without it the mirror is read-only (fail-closed).
+func WithDeviceMirrorInput(allow map[string]bool) DeviceOption {
+	return func(b *DeviceBackend) {
+		for udid, a := range allow {
+			b.mirrorInput[udid] = a
+		}
+	}
+}
+
 // WithDeviceWDAKick registers per-device supervisor kicks, invoked when a
 // WDA-backed action fails so the supervisor restarts the runner promptly.
 func WithDeviceWDAKick(kicks map[string]func()) DeviceOption {
@@ -83,18 +114,22 @@ func WithDeviceWDAKick(kicks map[string]func()) DeviceOption {
 }
 
 // SetMirror points a device at a mirrord helper socket (empty removes
-// the mirror client, reverting the device to WDA-backed). Safe to call
-// on a serving backend: runtime device attach rewires the backend
+// the mirror client, reverting the device to WDA-backed) and records
+// whether mutating (input) mirror actions are allowed for it —
+// fail-closed: allowInput=false makes the mirror read-only. Safe to
+// call on a serving backend: runtime device attach rewires the backend
 // without a restart. The config validator enforces at most one
 // mirror-backed device (the mirror is exclusive global state).
-func (b *DeviceBackend) SetMirror(udid, socket string) {
+func (b *DeviceBackend) SetMirror(udid, socket string, allowInput bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if socket == "" {
 		delete(b.mirror, udid)
+		delete(b.mirrorInput, udid)
 		return
 	}
 	b.mirror[udid] = mirror.New(socket)
+	b.mirrorInput[udid] = allowInput
 }
 
 // SetWDA points a device's WDA client at url (empty removes it), and
@@ -116,14 +151,63 @@ func (b *DeviceBackend) SetWDA(udid, url string, kick func()) {
 	}
 }
 
+// SetTemplateStore wires the template library save_template writes to;
+// nil leaves the action "unavailable".
+func (b *DeviceBackend) SetTemplateStore(st *templates.Store) { b.templates = st }
+
+// SetElementMapStore wires the element map (learning + the resolver
+// ladder's "map" fast-path rung); nil disables both.
+func (b *DeviceBackend) SetElementMapStore(st *elementmap.Store) {
+	if st == nil {
+		b.emap = nil
+		return
+	}
+	b.emap = &elementMapper{store: st, capture: b.captureClassed, bundle: b.launchedBundle}
+}
+
+// captureClassed implements the element map's classed capture: the
+// mirror window capture ("mirror") when the device is mirror-backed,
+// the WDA screenshot ("wda") otherwise.
+func (b *DeviceBackend) captureClassed(ctx context.Context, udid string) ([]byte, string, error) {
+	if m := b.mirrorFor(udid); m != nil {
+		scr, err := m.Screenshot(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		return scr.PNG, "mirror", nil
+	}
+	c, err := b.wdaFor(udid)
+	if err != nil {
+		return nil, "", err
+	}
+	png, err := c.Screenshot(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return png, "wda", nil
+}
+
+// learnElementMap / invalidateElementMap implement elementMapLearner
+// (see composite.go).
+func (b *DeviceBackend) learnElementMap(ctx context.Context, udid, name string, n *Node) {
+	b.emap.learn(ctx, udid, name, n)
+}
+
+func (b *DeviceBackend) invalidateElementMap(udid, name string) {
+	b.emap.invalidate(udid, name)
+}
+
 // NewDevice builds the physical-device actions backend.
 func NewDevice(opts ...DeviceOption) *DeviceBackend {
 	b := &DeviceBackend{
-		runner: ExecRunner{},
-		xcrun:  "xcrun",
-		wda:    map[string]*wda.Client{},
-		mirror: map[string]*mirror.Client{},
-		kick:   map[string]func(){},
+		runner:      ExecRunner{},
+		xcrun:       "xcrun",
+		wda:         map[string]*wda.Client{},
+		mirror:      map[string]*mirror.Client{},
+		mirrorInput: map[string]bool{},
+		kick:        map[string]func(){},
+		bundles:     map[string]string{},
+		axBreak:     newAXBreaker(),
 	}
 	for _, o := range opts {
 		o(b)
@@ -139,12 +223,20 @@ func NewDevice(opts ...DeviceOption) *DeviceBackend {
 		"tap_element":       handleDeviceTapElement,
 		"type_into_element": handleDeviceTypeIntoElement,
 		"scroll_to_element": handleDeviceScrollToElement,
+		"scroll_until":      handleDeviceScrollUntil,
+		"scroll_collect":    handleDeviceScrollCollect,
 		"wait_for_element":  handleDeviceWaitForElement,
 		"wait_tree_stable":  handleDeviceWaitTreeStable,
+		"assert_text":       handleDeviceAssertText,
+		"assert_no_text":    handleDeviceAssertNoText,
+		"assert_template":   handleDeviceAssertTemplate,
+		"tap_template":      handleDeviceTapTemplate,
+		"wait_for_stable":   handleDeviceWaitPixelStable,
 		"pasteboard_get":    handleDevicePasteboardGet,
 		"pasteboard_set":    handleDevicePasteboardSet,
 		"observe":           handleDeviceObserve,
 		"screenshot":        handleDeviceScreenshot,
+		"save_template":     handleDeviceSaveTemplate,
 	}
 	return b
 }
@@ -157,14 +249,29 @@ var deviceUnimplementedKinds = map[string]bool{
 	"key":          true,
 	"key_sequence": true,
 	"audit":        true,
+	// Wheel-scroll is a mirror-backend kind (routed via mirrorHandlers
+	// before this check); WDA has no wheel-event equivalent.
+	"scroll": true,
 }
 
 // Dispatch implements Backend.
 func (b *DeviceBackend) Dispatch(ctx context.Context, udid string, req proto.ActionRequest) (proto.ActionResult, error) {
 	h, ok := b.handlers[req.Kind]
+	mirrorSelfVerifies := false
 	if b.mirrorFor(udid) != nil {
 		if mh, mok := mirrorHandlers[req.Kind]; mok {
+			if mirrorInputKinds[req.Kind] && !b.mirrorInputAllowed(udid) {
+				return proto.ActionResult{}, forbidden("mirror input is disabled; set allow_input=true in the devices config (or --device-mirror-allow-input) to allow %q on device %s", req.Kind, udid)
+			}
 			h, ok = mh, true
+			// The mirrord helper verifies its own gestures (stampMirrorAck
+			// writes verified/verify/verify_delta, and an unverified
+			// gesture already fails via mirrorAckCheck), so the helper
+			// owns `verified` on mirror-backed devices: wrapping the
+			// handler in runVerified would clobber its verdict with a
+			// pixel-delta one and spend two extra captures on the
+			// serialized helper.
+			mirrorSelfVerifies = verifyKinds[req.Kind]
 		}
 	}
 	if !ok {
@@ -173,9 +280,45 @@ func (b *DeviceBackend) Dispatch(ctx context.Context, udid string, req proto.Act
 		}
 		return proto.ActionResult{}, badRequest("action kind %q is not supported on physical devices", req.Kind)
 	}
-	res, err := h(ctx, b, udid, req.Payload)
+	// Opt-in pixel verification around tap/swipe (see verify.go): the
+	// capture path follows the backend (mirror window capture when
+	// mirror-backed, WDA screenshot otherwise). Report-only.
+	var vspec verifySpec
+	if verifyKinds[req.Kind] {
+		var err error
+		if vspec, err = verifySpecFromPayload(req.Payload); err != nil {
+			return proto.ActionResult{}, err
+		}
+		if vspec.enabled {
+			if err := verifyPrecheck(req.Kind, req.Payload); err != nil {
+				return proto.ActionResult{}, err
+			}
+		}
+	}
+	var res map[string]any
+	var err error
+	if vspec.enabled && !mirrorSelfVerifies {
+		res, err = runVerified(ctx, vspec, b.captureFrame(udid), func() (map[string]any, error) {
+			return h(ctx, b, udid, req.Payload)
+		})
+	} else {
+		res, err = h(ctx, b, udid, req.Payload)
+	}
 	if err != nil {
 		return proto.ActionResult{}, err
+	}
+	if vspec.enabled && mirrorSelfVerifies {
+		// The helper only stamps a verdict when its own verification ran
+		// (verify:"off", or a helper predating the field, stamps nothing
+		// useful): a caller who asked verify:true must never get a plain
+		// success with no verification answer, so degrade to verify_error
+		// (report-only contract, same as a failed capture).
+		if v, ok := res["verify"].(string); !ok || v == "off" {
+			if res == nil {
+				res = map[string]any{}
+			}
+			res["verify_error"] = "pixel verification unavailable: the mirrord helper's own gesture verification is off (or the helper predates it), and the daemon defers to the helper on mirror-backed devices"
+		}
 	}
 	return proto.ActionResult{OK: true, Result: res}, nil
 }
@@ -259,6 +402,7 @@ func handleDeviceLaunchApp(ctx context.Context, b *DeviceBackend, udid string, p
 	if _, err := b.devicectl(ctx, args...); err != nil {
 		return nil, err
 	}
+	b.noteLaunchedBundle(udid, bundleID)
 	return map[string]any{"bundle_id": bundleID}, nil
 }
 
@@ -293,6 +437,16 @@ func handleDeviceTap(ctx context.Context, b *DeviceBackend, udid string, p map[s
 	y, err := coordField(p, "y")
 	if err != nil {
 		return nil, err
+	}
+	dur, held, err := durationMSField(p)
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		if err := c.TouchAndHold(ctx, x, y, time.Duration(dur)*time.Millisecond); err != nil {
+			return nil, b.wdaFail(udid, "tap", err)
+		}
+		return map[string]any{"x": x, "y": y, "duration_ms": dur, "backend": "wda"}, nil
 	}
 	if err := c.Tap(ctx, x, y); err != nil {
 		return nil, b.wdaFail(udid, "tap", err)

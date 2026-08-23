@@ -7,19 +7,21 @@ import (
 	"github.com/BariBariGood/manzanas/proto"
 )
 
-// ToggleRegistry wraps a base registry with an extra one (physical devices
-// via devicectl) that can be switched on and off at runtime, so a daemon
-// started without --devices can attach a phone later without restarting.
-// While off it behaves exactly like the base registry.
+// ToggleRegistry wraps a base registry with extra ones (physical devices
+// via devicectl, mirror-backed devices) that can be switched on and off at
+// runtime, so a daemon started without --devices can attach a phone later
+// without restarting. While off it behaves exactly like the base registry.
 type ToggleRegistry struct {
 	base   Registry
 	merged Registry
 	on     atomic.Bool
 }
 
-// NewToggle wraps base with extra behind a runtime switch (initially off).
-func NewToggle(base, extra Registry) *ToggleRegistry {
-	return &ToggleRegistry{base: base, merged: Merge(base, extra)}
+// NewToggle wraps base with the extras behind a runtime switch (initially
+// off). The extras are merged flat alongside base so MergedRegistry's
+// error accounting sees every fallible source directly.
+func NewToggle(base Registry, extras ...Registry) *ToggleRegistry {
+	return &ToggleRegistry{base: base, merged: Merge(append([]Registry{base}, extras...)...)}
 }
 
 // SetEnabled switches the extra registry on or off.

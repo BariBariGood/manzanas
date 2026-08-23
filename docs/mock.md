@@ -72,6 +72,15 @@ Supported action kinds: everything in PROTOCOL.md §5. Notes:
 
 ## Example: the full loop against --mock
 
+The nicest shape is the one-call YAML run ([runs.md](runs.md)) — this is
+the README's five-minute quickstart:
+
+```sh
+./bin/manzanas run hello.yaml -o evidence.md   # spec in the README / runs.md
+```
+
+The same loop over the raw HTTP API:
+
 ```sh
 D=http://localhost:7433
 L=$(curl -s -X POST $D/v0/leases -d '{"labels":["ios26"],"agent_id":"demo","ttl_seconds":300}')

@@ -1,11 +1,15 @@
 # Quickstart: one Mac, one simulator
 
 A full first session on a single Mac — install the daemon, lease a
-simulator, run an action, and grab a screenshot. No fleet, no VPN, no
-extra machines required: everything below talks to `localhost`.
+simulator, run an action, grab a screenshot, and finish with the
+one-call YAML run. No fleet, no VPN, no extra machines required:
+everything below talks to `localhost`, and the daemon needs **zero
+flags**.
 
 Prerequisites: macOS with Xcode (and at least one iOS simulator runtime)
-installed — verify with `xcrun simctl list devices`.
+installed — verify with `xcrun simctl list devices`. (No Mac? The whole
+walkthrough below also works against `manzanasd --mock` on any Linux
+box — see [mock.md](mock.md).)
 
 ## 1. Install and start the daemon
 
@@ -16,19 +20,28 @@ brew install manzanasd            # daemon (+ pulls in the manzanas CLI)
 brew services start manzanasd     # launchd service on port 7433
 ```
 
-Check it's up:
+Check the whole setup in one shot — the doctor diagnoses the daemon,
+the simulator toolchain, iOS runtimes, the journal, and the boot gates,
+and every failing check prints a one-line fix:
 
 ```sh
-curl -s localhost:7433/v0/healthz   # {"ok":true,...}
-manzanas --version
+manzanas doctor
 ```
+
+(Or minimally: `curl -s localhost:7433/v0/healthz` and
+`manzanas --version`.)
 
 (Building from source instead: `make build`, then
 `./bin/manzanasd --addr :7433`. See [install.md](install.md) for launchd
 tarball installs.)
 
-The daemon listens on port 7433. It has no auth in v0, so keep it on
-localhost or a private network — see [SECURITY.md](../SECURITY.md).
+The daemon listens on port 7433 and defaults are sensible with no
+flags at all: the run journal, template library, and element map land
+under `~/.manzanasd/`, the warm pool and safety gates use
+capacity-class defaults, and the opt-in surfaces (physical devices,
+the mirror backend, auth, broker) stay off until you ask. It has no
+auth in v0, so keep it on localhost or a private network — see
+[SECURITY.md](../SECURITY.md).
 
 ## 2. See your simulators
 
@@ -47,6 +60,8 @@ else drives that simulator:
 ```sh
 manzanas lease acquire --labels ios26 --agent me --ttl 600 --wait
 ```
+
+(`--ttl` takes bare seconds — `600`, not `10m`; default 300, max 3600.)
 
 Note the lease ID (`lse_...`) and target UDID in the output. Boot it if
 it isn't already booted:
@@ -70,6 +85,10 @@ manzanas targets | grep <udid>
 manzanas tap 200 400 --lease lse_...
 manzanas type "hello" --lease lse_...
 ```
+
+Note the CLI convention: positional arguments come first, flags after
+(`manzanas tap 200 400 --lease lse_...`, `manzanas button home --lease
+lse_...`).
 
 Right after a boot the accessibility bridge can take a few extra seconds
 to come up — a first action may fail with an AXe “No translation object”
@@ -102,6 +121,28 @@ manzanas lease release lse_...
 The lease expires on its own at TTL if you forget; `--reset erase` on
 acquire gives you a clean simulator every time.
 
+## 7. The one-call run
+
+Everything you just did by hand — lease, boot, actions, evidence,
+release — is one declarative call ([runs.md](runs.md)):
+
+```yaml
+# smoke.yaml
+name: smoke
+target:
+  labels: [ios26]
+steps:
+  - action: wait_tree_stable
+  - action: screenshot
+```
+
+```sh
+manzanas run smoke.yaml -o evidence.md
+```
+
+`evidence.md` is the journal's PR-ready markdown export — paste it into
+a PR comment. This is the shape agents should use for repeatable flows.
+
 ## Next steps
 
 - Everything above is also plain HTTP + JSON on `localhost:7433` — see
@@ -115,3 +156,5 @@ acquire gives you a clean simulator every time.
   fleet and a full mock action backend — the whole
   lease→observe→tap→audit loop against a synthetic app screen
   ([mock.md](mock.md)).
+- Something broken? `manzanas doctor`, then
+  [troubleshooting.md](troubleshooting.md).

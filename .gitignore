@@ -6,3 +6,5 @@ dist/
 clients/npm/*.tgz
 clients/npm/bin-native/
 clients/npm/node_modules/
+.swarm/
+.opencode/

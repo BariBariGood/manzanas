@@ -151,6 +151,15 @@ func TestDeviceSimOnlyKindNotImplemented(t *testing.T) {
 	}
 }
 
+func TestDeviceMirrorOnlyKindsNotImplemented(t *testing.T) {
+	b := testDeviceBackend(newFakeRunner())
+	// Wheel-scroll is a mirror-only kind: on a WDA-backed device it
+	// surfaces as a capability gap, not a caller error.
+	if _, err := deviceDispatch(t, b, "scroll", map[string]any{"x": 1, "y": 2, "dy": 10}); actionCode(t, err) != "not_implemented" {
+		t.Fatalf("scroll: want not_implemented")
+	}
+}
+
 // recordingBackend records which backend a dispatch landed on.
 type recordingBackend struct{ kinds []string }
 

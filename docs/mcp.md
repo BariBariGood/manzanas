@@ -127,6 +127,7 @@ elements and acts on them, so the agent never computes coordinates):
 | `scroll_to_element` | Scroll (bounded swipes) until the matched element is visible on screen; distinguishes "never in the tree" from "matched but stuck off screen". |
 | `wait_for_element` | Wait until a matching element appears (or disappears with `absent`). |
 | `wait_tree_stable` | Wait until the screen stops changing (animations/loads settled). |
+| `wait_for_stable` | Wait until the screen's pixels stop changing (screenshot diffs stay under a threshold for a quiet window) — works on every backend, and needs no OCR per poll on mirror devices. |
 | `audit` | Deterministic UI-quality checks over the current tree → findings (evidence, not verdicts) + annotated screenshot, both journaled. See [The audit tool](#the-audit-tool-deterministic-ui-checks). |
 
 Matchers, shared by all element tools: `label` (visible text, substring),

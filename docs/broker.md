@@ -1,5 +1,8 @@
 # manzanas-broker: multi-Mac federation
 
+*Who this is for: operators running two or more Mac hosts. One Mac
+needs no broker — point clients straight at the daemon.*
+
 `manzanas-broker` fronts N `manzanasd` daemons (one per Mac) behind a single
 endpoint so agents can lease "any matching simulator in the fleet" without
 knowing which Mac owns it. It is cross-platform — typically it runs on a

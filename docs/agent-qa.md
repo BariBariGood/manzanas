@@ -120,6 +120,26 @@ Gotchas that cost real time:
   ~0.4 s once the warm helper is resident). `observe` retries the
   "No translation object returned" window internally.
 
+### Verify outcomes explicitly (assert_* + verified taps)
+
+A tap that never reached the app still returns `ok:true` — the daemon
+only promises the input was posted. To make postconditions explicit,
+use the verification layer (PROTOCOL.md §5.1 "Verification"):
+
+- `assert_text {"text":"Welcome"}` / `assert_no_text` check the observe
+  source (a11y tree text; OCR boxes on mirror devices, where
+  `min_confidence` filters on recognition confidence) with a short
+  bounded retry (default 3 s). A false postcondition is
+  `417 assertion_failed` — distinct from `timeout`.
+- `assert_template {"template_base64": ...}` matches an inline image
+  crop against the current screen (NCC, default threshold 0.8);
+  `{"name": ...}` matches a template stored with `save_template`
+  (requires `--templates-dir`; see docs/templates.md).
+- `tap`/`swipe` with `"verify": true` compares downscaled pre/post
+  frames and reports `verified: true|false` + `pixel_delta` without
+  failing the action — a cheap "did anything actually change?" signal.
+  Mask volatile regions (clock, spinners) with `verify_masks`.
+
 ## 4. Stream (watch the run live)
 
 ```sh

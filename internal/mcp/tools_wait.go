@@ -40,6 +40,47 @@ func toolWaitForElement() Tool {
 	}
 }
 
+func toolWaitPixelStable() Tool {
+	return Tool{
+		Name:        "wait_for_stable",
+		Description: "Wait until the screen's pixels stop changing (consecutive screenshots diff below a threshold for the quiet window), i.e. animations and loads have visually settled. Works on every backend — including mirror-backed devices, where it is far cheaper than wait_tree_stable (no OCR per poll). A screen that never settles (looping animation, video) returns stable=false, which is an observation, not an error.",
+		InputSchema: schema(map[string]map[string]any{
+			"lease_id": {"type": "string", "description": "Active lease ID from lease_acquire."},
+			"quiet_ms": {"type": "integer", "default": 500,
+				"description": "How long the screen must hold visually still to count as settled, in milliseconds."},
+			"timeout_ms": {"type": "integer", "default": 15000,
+				"description": "Max wait in milliseconds (max 120000). Elapsing is not an error: the result carries stable=false."},
+			"interval_ms": {"type": "integer", "default": 500,
+				"description": "Delay between screenshot polls in milliseconds (min 10)."},
+			"threshold": {"type": "number", "default": 0.002,
+				"description": "Normalized mean-abs-diff (0..1 exclusive) under which two frames count as unchanged."},
+			"mask": {"type": "array", "items": map[string]any{"type": "object"},
+				"description": "Rectangles {x,y,w,h} in capture pixels excluded from the diff (volatile regions such as clocks or spinners)."},
+		}, "lease_id"),
+		Call: func(ctx context.Context, s *Server, args map[string]any) ([]map[string]any, error) {
+			leaseID, err := requireLease(args)
+			if err != nil {
+				return nil, err
+			}
+			p := map[string]any{}
+			for _, k := range []string{"quiet_ms", "timeout_ms", "interval_ms", "threshold", "mask"} {
+				if v, ok := args[k]; ok {
+					p[k] = v
+				}
+			}
+			res, err := s.client.Dispatch(ctx, proto.ActionRequest{
+				LeaseID: leaseID, Kind: "wait_for_stable", Payload: p})
+			if err != nil {
+				return nil, err
+			}
+			if err := actionErr(res); err != nil {
+				return nil, err
+			}
+			return jsonContent(res.Result)
+		},
+	}
+}
+
 func toolWaitTreeStable() Tool {
 	return Tool{
 		Name:        "wait_tree_stable",

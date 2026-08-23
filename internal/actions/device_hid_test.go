@@ -16,6 +16,7 @@ import (
 type fakeWDAServer struct {
 	mu         sync.Mutex
 	taps       [][2]float64
+	presses    [][3]float64 // x, y, pause duration (ms)
 	keys       []string
 	swipes     [][5]float64
 	buttons    []string
@@ -62,6 +63,38 @@ func (f *fakeWDAServer) start(t *testing.T) string {
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		f.mu.Lock()
 		f.taps = append(f.taps, [2]float64{b.X, b.Y})
+		f.mu.Unlock()
+		writeValue(w, nil)
+	})
+	mux.HandleFunc("POST /session/s1/actions", func(w http.ResponseWriter, r *http.Request) {
+		if !gate(w) {
+			return
+		}
+		var b struct {
+			Actions []struct {
+				Type    string `json:"type"`
+				Actions []struct {
+					Type     string  `json:"type"`
+					X        float64 `json:"x"`
+					Y        float64 `json:"y"`
+					Duration float64 `json:"duration"`
+				} `json:"actions"`
+			} `json:"actions"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		var press [3]float64
+		for _, chain := range b.Actions {
+			for _, a := range chain.Actions {
+				switch a.Type {
+				case "pointerMove":
+					press[0], press[1] = a.X, a.Y
+				case "pause":
+					press[2] = a.Duration
+				}
+			}
+		}
+		f.mu.Lock()
+		f.presses = append(f.presses, press)
 		f.mu.Unlock()
 		writeValue(w, nil)
 	})
@@ -155,6 +188,45 @@ func testDeviceBackendWithWDA(t *testing.T, f *fakeWDAServer, opts ...DeviceOpti
 		WithDeviceWDA(map[string]string{"DEV-UDID": url}),
 	}, opts...)
 	return NewDevice(opts...)
+}
+
+// A tap with duration_ms on a WDA device is a real long-press: one W3C
+// pointer chain (pointerDown → pause → pointerUp), no plain tap and no
+// capability note.
+func TestDeviceTapDurationLongPress(t *testing.T) {
+	f := &fakeWDAServer{sourceXML: sampleWDAXML}
+	b := testDeviceBackendWithWDA(t, f)
+	res, err := deviceDispatch(t, b, "tap", map[string]any{"x": 10, "y": 20, "duration_ms": 500})
+	if err != nil {
+		t.Fatalf("tap with duration_ms: %v", err)
+	}
+	if _, ok := res.Result["note"]; ok {
+		t.Fatalf("result = %+v, long-press must not carry the plain-tap note", res.Result)
+	}
+	if res.Result["backend"] != "wda" || res.Result["duration_ms"] != 500.0 {
+		t.Fatalf("result = %+v, want backend wda and duration_ms 500", res.Result)
+	}
+	if len(f.taps) != 0 {
+		t.Fatalf("taps = %v, long-press must not issue a plain tap", f.taps)
+	}
+	if len(f.presses) != 1 || f.presses[0] != [3]float64{10, 20, 500} {
+		t.Fatalf("presses = %v, want one 500ms press at (10,20)", f.presses)
+	}
+}
+
+// The long-press bound matches the mirror backend: 1–10000ms.
+func TestDeviceTapDurationValidation(t *testing.T) {
+	f := &fakeWDAServer{sourceXML: sampleWDAXML}
+	b := testDeviceBackendWithWDA(t, f)
+	for _, dur := range []any{0, -100, 10001, "long"} {
+		_, err := deviceDispatch(t, b, "tap", map[string]any{"x": 10, "y": 20, "duration_ms": dur})
+		if actionCode(t, err) != "bad_request" {
+			t.Fatalf("duration_ms=%v: want bad_request, got %v", dur, err)
+		}
+	}
+	if len(f.taps) != 0 || len(f.presses) != 0 {
+		t.Fatalf("invalid durations still reached WDA: taps=%v presses=%v", f.taps, f.presses)
+	}
 }
 
 func TestDeviceSwipe(t *testing.T) {
@@ -322,5 +394,30 @@ func TestDeviceWDAFailureKicksSupervisor(t *testing.T) {
 	}
 	if kicked == 0 {
 		t.Fatal("supervisor kick was not invoked on WDA failure")
+	}
+}
+
+// The mirror gesture-evidence stamping must not reach WDA-backed
+// composites: their results carry no input_mode/verified fields.
+func TestDeviceCompositesCarryNoMirrorEvidence(t *testing.T) {
+	f := &fakeWDAServer{sourceXML: sampleWDAXML}
+	b := testDeviceBackendWithWDA(t, f)
+	for _, tc := range []struct {
+		kind    string
+		payload map[string]any
+	}{
+		{"tap_element", map[string]any{"label": "Log In"}},
+		{"type_into_element", map[string]any{"label": "Email", "text": "x@y.z"}},
+	} {
+		res, err := deviceDispatch(t, b, tc.kind, tc.payload)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.kind, err)
+		}
+		if _, ok := res.Result["input_mode"]; ok {
+			t.Fatalf("%s result = %+v, WDA composites must not claim an input mode", tc.kind, res.Result)
+		}
+		if _, ok := res.Result["verified"]; ok {
+			t.Fatalf("%s result = %+v, WDA composites must not claim verification", tc.kind, res.Result)
+		}
 	}
 }

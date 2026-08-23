@@ -5,6 +5,13 @@ iOS simulators (and, in v0.2, physical devices): enumeration, leases, action
 dispatch, media streaming, state fixtures, and the run journal. Clients are
 thin and cross-platform.
 
+It is deliberately **one orchestration core** with transports as thin
+backends behind the actions interface — simulators (AXe/simctl),
+physical devices (WebDriverAgent), and iPhone Mirroring (mirrord) all
+serve the same leases, actions, runs, and journal. Where that boundary
+sits, what would ever be split out, and what the project refuses to
+become are written down in [non-goals.md](non-goals.md).
+
 ```
 ┌ Linux/CI/anywhere ────────────────┐      ┌ each Mac host ──────────────────────────┐
 │ manzanas (thin client, Go)         │  WS  │ manzanasd (Go daemon)                     │

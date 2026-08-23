@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -18,9 +19,14 @@ import (
 // leaseFlag parses the --lease flag shared by every action command.
 // Positional args come first; flags after them. A leading "--" marks
 // everything up to the flag section as literal (allows dash-prefixed text).
-func leaseFlag(app *appEnv, name string, args []string, positional int) (leaseID string, pos []string, err error) {
+// Commands with their own flags pass register funcs to bind them on the
+// same flag set, keeping the "--" and ordering diagnostics in one place.
+func leaseFlag(app *appEnv, name string, args []string, positional int, register ...func(*flag.FlagSet)) (leaseID string, pos []string, err error) {
 	fs := app.newFlagSet(name)
 	lease := fs.String("lease", os.Getenv("MANZANAS_LEASE"), "active lease ID (or $MANZANAS_LEASE)")
+	for _, r := range register {
+		r(fs)
+	}
 	literal := len(args) > 0 && args[0] == "--"
 	if literal {
 		args = args[1:]
@@ -30,6 +36,11 @@ func leaseFlag(app *appEnv, name string, args []string, positional int) (leaseID
 	}
 	if !literal {
 		for _, a := range args[:positional] {
+			// A negative number is a positional value, not a flag
+			// (scroll's DY is routinely negative).
+			if _, err := strconv.ParseFloat(a, 64); err == nil {
+				continue
+			}
 			if strings.HasPrefix(a, "-") {
 				return "", nil, fmt.Errorf("%s: positional arguments must come before flags (got %q; use %q before them to pass literal dash-prefixed values)", name, a, "--")
 			}
@@ -67,9 +78,13 @@ func emitActionResult(app *appEnv, res proto.ActionResult) error {
 	return nil
 }
 
-// cmdTap implements `manzanas tap X Y --lease ID` ("tap" action).
+// cmdTap implements `manzanas tap X Y [--duration-ms N] --lease ID`
+// ("tap" action; a duration makes it a long-press).
 func cmdTap(ctx context.Context, app *appEnv, args []string) error {
-	leaseID, pos, err := leaseFlag(app, "tap", args, 2)
+	var dur *int
+	leaseID, pos, err := leaseFlag(app, "tap", args, 2, func(fs *flag.FlagSet) {
+		dur = fs.Int("duration-ms", 0, "press duration in milliseconds (long-press)")
+	})
 	if err != nil {
 		return err
 	}
@@ -78,7 +93,40 @@ func cmdTap(ctx context.Context, app *appEnv, args []string) error {
 	if err1 != nil || err2 != nil {
 		return fmt.Errorf("tap: X and Y must be numbers")
 	}
-	res, err := app.client.Tap(ctx, leaseID, x, y)
+	payload := map[string]any{"x": x, "y": y}
+	if *dur != 0 {
+		if *dur < 0 {
+			return fmt.Errorf("tap: --duration-ms must be positive (got %d)", *dur)
+		}
+		payload["duration_ms"] = *dur
+	}
+	res, err := app.client.Dispatch(ctx, proto.ActionRequest{
+		LeaseID: leaseID, Kind: "tap", Payload: payload})
+	if err != nil {
+		return err
+	}
+	return emitActionResult(app, res)
+}
+
+// cmdScroll implements `manzanas scroll X Y DY --lease ID` ("scroll"
+// action: wheel-scroll at a point; mirror-backed devices only. Positive
+// DY scrolls content down).
+func cmdScroll(ctx context.Context, app *appEnv, args []string) error {
+	leaseID, pos, err := leaseFlag(app, "scroll", args, 3)
+	if err != nil {
+		return err
+	}
+	vals := make([]float64, 3)
+	for i := 0; i < 3; i++ {
+		v, err := strconv.ParseFloat(pos[i], 64)
+		if err != nil {
+			return fmt.Errorf("scroll: X, Y, and DY must be numbers")
+		}
+		vals[i] = v
+	}
+	res, err := app.client.Dispatch(ctx, proto.ActionRequest{
+		LeaseID: leaseID, Kind: "scroll",
+		Payload: map[string]any{"x": vals[0], "y": vals[1], "dy": vals[2]}})
 	if err != nil {
 		return err
 	}

@@ -44,6 +44,7 @@ func handleLaunchApp(ctx context.Context, b *AXeBackend, udid string, p map[stri
 	if err != nil {
 		return nil, err
 	}
+	b.noteLaunchedBundle(udid, bundleID)
 	res := map[string]any{"bundle_id": bundleID}
 	// simctl prints "<bundle id>: <pid>".
 	if _, pid, ok := strings.Cut(strings.TrimSpace(string(out)), ": "); ok {

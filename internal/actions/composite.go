@@ -62,8 +62,13 @@ func elemTap(ctx context.Context, d elementDriver, udid string, p map[string]any
 	if err != nil {
 		return nil, err
 	}
+	// Learn BEFORE the tap: the fingerprint must capture the screen the
+	// element resolved on — the same screen the map rung will compare
+	// against next time — not the post-tap reaction.
+	learnMapEntry(ctx, d, udid, p, res, found)
 	x, y, err := tapAnchor(ctx, d, udid, found, anchor, viewport)
 	if err != nil {
+		invalidateMapEntry(d, udid, p, res)
 		return nil, err
 	}
 	res["element"] = leafCopy(found)
@@ -101,8 +106,12 @@ func elemTypeInto(ctx context.Context, d elementDriver, udid string, p map[strin
 	if err != nil {
 		return nil, err
 	}
+	// Learn BEFORE the focusing tap, like elemTap: the fingerprint must
+	// capture the screen the element resolved on (pre-keyboard).
+	learnMapEntry(ctx, d, udid, p, res, found)
 	x, y, err := tapAnchor(ctx, d, udid, found, anchor, viewport)
 	if err != nil {
+		invalidateMapEntry(d, udid, p, res)
 		return nil, err
 	}
 	if opts.requireFocus {
@@ -111,8 +120,10 @@ func elemTypeInto(ctx context.Context, d elementDriver, udid string, p map[strin
 			return nil, err
 		}
 		// The tap above is what focuses the field; the guard verifies the
-		// keyboard actually came up before any keystroke is sent.
+		// keyboard actually came up before any keystroke is sent — a
+		// stale cached frame that missed the field surfaces here.
 		if err := requireFocusedField(ctx, d, udid, refresh); err != nil {
+			invalidateMapEntry(d, udid, p, res)
 			return nil, err
 		}
 	}
@@ -129,6 +140,37 @@ func elemTypeInto(ctx context.Context, d elementDriver, udid string, p map[strin
 	return res, nil
 }
 
+// learnMapEntry records a resolution that came through an observing
+// rung into the driver's element map (see resolver_map.go); a
+// resolution the map rung itself served has nothing new to record.
+func learnMapEntry(ctx context.Context, d elementDriver, udid string, p map[string]any, res map[string]any, found *Node) {
+	l, ok := d.(elementMapLearner)
+	if !ok {
+		return
+	}
+	if rname, _ := res["resolver"].(string); rname == "" || rname == resolverMapName {
+		return
+	}
+	l.learnElementMap(ctx, udid, mapKey(p), found)
+}
+
+// invalidateMapEntry drops the element-map entry behind a failing tap:
+// whether the cached frame steered the tap wrong (map rung) or the
+// just-learned frame turned out untappable, the entry can no longer be
+// trusted; the next resolution goes through the observing rungs (and
+// re-learns). res's rung provenance gates the cheap case where no
+// ladder ran at all.
+func invalidateMapEntry(d elementDriver, udid string, p map[string]any, res map[string]any) {
+	l, ok := d.(elementMapLearner)
+	if !ok {
+		return
+	}
+	if rname, _ := res["resolver"].(string); rname == "" {
+		return
+	}
+	l.invalidateElementMap(udid, mapKey(p))
+}
+
 // findElement polls the a11y tree until an element matching the payload
 // predicate appears with its anchor point inside the viewport (or the
 // timeout budget runs out), returning the match, the viewport of the poll
@@ -137,6 +179,15 @@ func elemTypeInto(ctx context.Context, d elementDriver, udid string, p map[strin
 // sheet or toast still animating in) keeps the wait polling; off_viewport
 // surfaces only when the budget expires with nothing tappable on screen.
 func findElement(ctx context.Context, d elementDriver, udid string, p map[string]any, anchor string) (*Node, *Frame, map[string]any, error) {
+	// Backends that register a resolver ladder route through it (rung
+	// provenance, per-rung budgets, AX circuit breaker, escalation
+	// bundles — see resolver.go); the direct poll below is the fallback
+	// for drivers without one.
+	if rp, ok := d.(resolverProvider); ok {
+		if lad := rp.elementResolvers(udid); len(lad.rungs) > 0 {
+			return resolveLadder(ctx, d, udid, p, anchor, lad)
+		}
+	}
 	pr, err := matcherFromPayload(p)
 	if err != nil {
 		return nil, nil, nil, err

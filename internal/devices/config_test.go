@@ -14,7 +14,7 @@ func TestFromFlags(t *testing.T) {
 		"UD1=http://127.0.0.1:8100,UD2=http://127.0.0.1:8200",
 		"UD1=devicectl:com.manzanas.wda.xctrunner",
 		"UD1=8100:8100",
-		"UD3=mirror", "/tmp/mirrord.sock")
+		"UD3=mirror", "/tmp/mirrord.sock", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +32,16 @@ func TestFromFlags(t *testing.T) {
 		t.Errorf("UD2 = %+v", got)
 	}
 	if got := cfg.Mirror["UD3"]; got != (proto.DeviceMirrorConfig{Socket: "/tmp/mirrord.sock"}) {
+		t.Errorf("UD3 = %+v", got)
+	}
+}
+
+func TestFromFlagsMirrorAllowInput(t *testing.T) {
+	cfg, err := FromFlags(true, "", "", "", "UD3=mirror", "/tmp/mirrord.sock", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Mirror["UD3"]; got != (proto.DeviceMirrorConfig{Socket: "/tmp/mirrord.sock", AllowInput: true}) {
 		t.Errorf("UD3 = %+v", got)
 	}
 }
@@ -69,18 +79,18 @@ func TestFromFlagsErrors(t *testing.T) {
 		{"UD1=http://x", "", "UD1=0:8100", "invalid local port"},
 	}
 	for _, c := range cases {
-		_, err := FromFlags(true, c.wda, c.launch, c.forward, "", "")
+		_, err := FromFlags(true, c.wda, c.launch, c.forward, "", "", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("FromFlags(%q,%q,%q) err = %v, want %q", c.wda, c.launch, c.forward, err, c.want)
 		}
 	}
 	// The mirror is one global window per Mac: two mirror devices are
 	// rejected, as is a device that is both mirror- and WDA-backed.
-	if _, err := FromFlags(true, "", "", "", "A=mirror,B=mirror", ""); err == nil ||
+	if _, err := FromFlags(true, "", "", "", "A=mirror,B=mirror", "", false); err == nil ||
 		!strings.Contains(err.Error(), "at most one mirror-backed device") {
 		t.Errorf("two mirror devices: err = %v", err)
 	}
-	if _, err := FromFlags(true, "A=http://x", "", "", "A=mirror", ""); err == nil ||
+	if _, err := FromFlags(true, "A=http://x", "", "", "A=mirror", "", false); err == nil ||
 		!strings.Contains(err.Error(), "pick one backend per device") {
 		t.Errorf("mirror+wda device: err = %v", err)
 	}

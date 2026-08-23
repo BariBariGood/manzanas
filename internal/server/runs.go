@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
@@ -116,6 +117,44 @@ func (s *Server) validateRunSpec(spec proto.RunSpec) *proto.Error {
 	if spec.Timeouts.AcquireSeconds < 0 || spec.Timeouts.RunSeconds < 0 || spec.Timeouts.StepSeconds < 0 {
 		return &proto.Error{Code: proto.ErrBadRequest, Message: "timeouts must be >= 0"}
 	}
+	return validateRunExpects(spec)
+}
+
+// validateRunExpects rejects malformed expect blocks, mirroring the
+// client-side runspec checks (the daemon revalidates everything).
+func validateRunExpects(spec proto.RunSpec) *proto.Error {
+	for i, st := range spec.Steps {
+		e := st.Expect
+		if e == nil {
+			continue
+		}
+		bad := func(format string, args ...any) *proto.Error {
+			return &proto.Error{Code: proto.ErrBadRequest,
+				Message: fmt.Sprintf("steps[%d].expect: ", i) + fmt.Sprintf(format, args...)}
+		}
+		if len(e.Texts) == 0 && e.Fingerprint == "" {
+			return bad("requires texts and/or fingerprint")
+		}
+		if e.JaccardMin < 0 || e.JaccardMin > 1 {
+			return bad("jaccard_min must be in (0, 1] (0 = default)")
+		}
+		if e.JaccardMin != 0 && len(e.Texts) == 0 {
+			return bad("jaccard_min requires texts")
+		}
+		if e.Fingerprint != "" {
+			if _, err := strconv.ParseUint(e.Fingerprint, 16, 64); err != nil {
+				return bad("fingerprint must be a 64-bit hex DHash")
+			}
+		}
+		if d := e.MaxHashDistance; d != nil {
+			if *d < 0 || *d > 64 {
+				return bad("max_hash_distance must be in [0, 64]")
+			}
+			if e.Fingerprint == "" {
+				return bad("max_hash_distance requires fingerprint")
+			}
+		}
+	}
 	return nil
 }
 
@@ -212,6 +251,7 @@ func (s *Server) executeRun(h *runHandle) {
 	s.recordRunEvent(ctx, h, l, "runs.start", nil)
 
 	stagesErr := s.runStages(ctx, h, l, stepTO)
+	s.stampRunVerdict(h, l.ID)
 	s.recordRunEvent(ctx, h, l, "runs.finish", stagesErr)
 	released = true
 	s.runRelease(h, l.ID, stagesErr != nil)
@@ -350,9 +390,9 @@ func (s *Server) runStages(ctx context.Context, h *runHandle, l proto.Lease, ste
 				LeaseID: l.ID, Kind: st.Action, Payload: st.With,
 			})
 		}
-		cancel()
 		res.DurationMS = time.Since(started).Milliseconds()
 		if wireErr != nil {
+			cancel()
 			res.Status = proto.StepError
 			res.Error = wireErr
 			if firstErr == nil {
@@ -361,12 +401,44 @@ func (s *Server) runStages(ctx context.Context, h *runHandle, l proto.Lease, ste
 			if !st.ContinueOnError {
 				halted = true
 			}
-		} else {
-			res.Status = proto.StepOK
-			res.JournalRef = actRes.JournalRef
+			h.update(func(r *proto.Run) { r.Steps = append(r.Steps, res) })
+			continue
 		}
+		res.Status = proto.StepOK
+		res.JournalRef = actRes.JournalRef
+		if v, ok := actRes.Result["verified"].(bool); ok {
+			res.Verified = &v
+		}
+		// Post-step drift check (expect block) and, when recording
+		// expectations, the post-step observation for the exporter. Both
+		// run inside the step's own budget window.
+		if st.Expect != nil {
+			drifted, detail, checkErr := s.checkExpect(stepCtx, l.ID, st.Expect)
+			if checkErr != nil {
+				res.DriftDetail = "drift check skipped: " + checkErr.Error()
+			} else if drifted {
+				res.Drifted = true
+				res.DriftDetail = detail
+				if spec.StrictDrift {
+					if firstErr == nil {
+						firstErr = &proto.Error{Code: proto.ErrAssertionFailed,
+							Message: fmt.Sprintf("steps[%d] %s: drift detected: %s", i, st.Action, detail)}
+					}
+					if !st.ContinueOnError {
+						halted = true
+					}
+				}
+			}
+		}
+		if spec.RecordExpectations && mutatingStepKind(st.Action) && s.journal.Store() != nil {
+			s.recordStepExpectation(stepCtx, l, i, st.Action)
+		}
+		cancel()
 		h.update(func(r *proto.Run) { r.Steps = append(r.Steps, res) })
 	}
+
+	verdict := computeVerdict(spec.Steps, h.snapshot().Steps)
+	h.update(func(r *proto.Run) { r.Verdict = verdict })
 
 	if fs := spec.Artifacts.FinalScreenshot; (fs == nil || *fs) && s.actions != nil {
 		// On a failed run the stage keeps pointing at what failed; the
@@ -607,6 +679,28 @@ func (s *Server) finishRun(h *runHandle, wireErr *proto.Error) {
 	})
 }
 
+// stampRunVerdict copies the steps stage's verdict into the run's
+// journal meta (best-effort, like all recording), so `journal ls` and
+// exports can grade a replay without the run resource.
+func (s *Server) stampRunVerdict(h *runHandle, runID string) {
+	verdict := h.snapshot().Verdict
+	if verdict == "" || runID == "" {
+		return
+	}
+	store := s.journal.Store()
+	if store == nil {
+		return
+	}
+	meta, err := store.ReadMeta(runID)
+	if err != nil {
+		return
+	}
+	meta.Verdict = string(verdict)
+	if err := store.WriteMeta(runID, meta); err != nil {
+		s.log.Warn("run verdict meta write failed", "run", runID, "err", err)
+	}
+}
+
 // recordRunEvent journals a run lifecycle entry into the run's journal.
 func (s *Server) recordRunEvent(ctx context.Context, h *runHandle, l proto.Lease, action string, wireErr *proto.Error) {
 	run := h.snapshot()
@@ -614,6 +708,9 @@ func (s *Server) recordRunEvent(ctx context.Context, h *runHandle, l proto.Lease
 		Kind: "run", LeaseID: l.ID, AgentID: l.AgentID, Action: action,
 		Status: "ok",
 		Extra:  map[string]any{"run": run.ID, "name": run.Spec.Name},
+	}
+	if run.Verdict != "" {
+		ev.Extra["verdict"] = string(run.Verdict)
 	}
 	if wireErr != nil {
 		ev.Status, ev.Error = "error", wireErr.Message

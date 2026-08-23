@@ -23,7 +23,11 @@ type WarmBackend struct {
 	// (an AXe binary exists); a refresh:true observe is only re-routed
 	// cold when it can be served there.
 	coldAXe bool
-	log     *slog.Logger
+	// coldCapture yields the cold backend's frame-capture path (which
+	// works via simctl even without AXe); used to verify warm inputs on
+	// AXe-less hosts.
+	coldCapture func(udid string) frameCaptureFunc
+	log         *slog.Logger
 	// warmOps maps an action kind to its simbridge translation; kinds not
 	// present are always dispatched cold.
 	warmOps map[string]warmOp
@@ -69,6 +73,10 @@ func NewWarm(cold Backend, factory HelperFactory, cfg PoolConfig) *WarmBackend {
 	b.coldAXe = true
 	if ab, ok := cold.(*AXeBackend); ok {
 		b.coldAXe = ab.AXeAvailable()
+		// Frame capture works even without the AXe binary (capturePNG
+		// falls back to simctl), so verified actions on AXe-less hosts
+		// can still get pre/post frames around the warm input.
+		b.coldCapture = ab.captureFrame
 		// Accelerate the cold backend's per-poll a11y reads (wait_for_element,
 		// wait_tree_stable) through the resident helper.
 		ab.SetWarmObserver(b.observePoll)
@@ -109,6 +117,65 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 	if !ok {
 		return b.cold.Dispatch(ctx, udid, req)
 	}
+	// Pixel verification (verify: true) captures pre/post screenshots;
+	// the cold backend owns the capture path, so a host with the cold
+	// AXe binary routes the whole action cold (the tap itself still
+	// lands, just without the warm helper's latency win — verification
+	// is an evidence trade-off). On AXe-less hosts the input still runs
+	// warm, wrapped in the cold capture path (which falls back to
+	// simctl); a host with no capture path at all degrades to
+	// verify_error (report-only contract: verification never blocks a
+	// deliverable input).
+	verifyUnavailable := false
+	if verifyKinds[req.Kind] {
+		vspec, err := verifySpecFromPayload(req.Payload)
+		if err != nil {
+			return proto.ActionResult{}, err
+		}
+		if vspec.enabled {
+			if b.coldAXe {
+				return b.cold.Dispatch(ctx, udid, req)
+			}
+			if b.coldCapture != nil {
+				if err := verifyPrecheck(req.Kind, req.Payload); err != nil {
+					return proto.ActionResult{}, err
+				}
+				res, err := runVerified(ctx, vspec, b.coldCapture(udid), func() (map[string]any, error) {
+					return b.dispatchRest(ctx, udid, req, w)
+				})
+				if err != nil {
+					return proto.ActionResult{}, err
+				}
+				return proto.ActionResult{OK: true, Result: res}, nil
+			}
+			verifyUnavailable = true
+		}
+	}
+	res, err := b.dispatchRest(ctx, udid, req, w)
+	if err != nil {
+		return proto.ActionResult{}, err
+	}
+	if verifyUnavailable {
+		if res == nil {
+			res = map[string]any{}
+		}
+		res["verify_error"] = "pixel verification unavailable: no capture path on this host for pre/post frames"
+	}
+	return proto.ActionResult{OK: true, Result: res}, nil
+}
+
+// dispatchRest runs the warm dispatch flow after the verify routing:
+// log-capture routing, opt-in a11y evidence, the warm helper call, and
+// its cold fallbacks. Returns the action's result map so a verified
+// dispatch can wrap it in runVerified.
+func (b *WarmBackend) dispatchRest(ctx context.Context, udid string, req proto.ActionRequest, w warmOp) (map[string]any, error) {
+	dispatchCold := func() (map[string]any, error) {
+		cr, err := b.cold.Dispatch(ctx, udid, req)
+		if err != nil {
+			return nil, err
+		}
+		return cr.Result, nil
+	}
 	// Log capture (capture_logs) runs simctl around the action window;
 	// only the cold backend can do that, so route the whole action cold.
 	// On hosts without a cold AXe binary the action still runs warm and
@@ -117,11 +184,11 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 	if logKinds[req.Kind] {
 		spec, err := logCaptureFromPayload(req.Payload)
 		if err != nil {
-			return proto.ActionResult{}, err
+			return nil, err
 		}
 		if spec.enabled {
 			if b.coldAXe {
-				return b.cold.Dispatch(ctx, udid, req)
+				return dispatchCold()
 			}
 			logsUnavailable = true
 		}
@@ -133,7 +200,7 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 	if hidKinds[req.Kind] {
 		v, err := boolFlag(req.Payload, "ax_hashes", false)
 		if err != nil {
-			return proto.ActionResult{}, err
+			return nil, err
 		}
 		wantAX = v
 	}
@@ -143,7 +210,7 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 	}
 	res, err := b.dispatchWarm(ctx, udid, req, w)
 	if errors.Is(err, errColdOnly) {
-		return b.cold.Dispatch(ctx, udid, req)
+		return dispatchCold()
 	}
 	var te *TransportError
 	if errors.As(err, &te) {
@@ -152,14 +219,14 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 			// it cold could apply it twice, so surface the failure instead.
 			b.log.Warn("warm helper failed after input may have been delivered; not retrying",
 				"kind", req.Kind, "udid", udid, "err", err)
-			return proto.ActionResult{}, unavailable("warm helper failed mid-%s; the input may or may not have been delivered", req.Kind)
+			return nil, unavailable("warm helper failed mid-%s; the input may or may not have been delivered", req.Kind)
 		}
 		b.log.Warn("warm path unavailable; falling back to cold backend",
 			"kind", req.Kind, "udid", udid, "err", err)
-		return b.cold.Dispatch(ctx, udid, req)
+		return dispatchCold()
 	}
 	if err != nil {
-		return proto.ActionResult{}, err
+		return nil, err
 	}
 	if wantAX {
 		if res == nil {
@@ -178,7 +245,7 @@ func (b *WarmBackend) Dispatch(ctx context.Context, udid string, req proto.Actio
 		}
 		res["log_error"] = "log capture unavailable: no cold AXe backend on this host to run simctl around the action window"
 	}
-	return proto.ActionResult{OK: true, Result: res}, nil
+	return res, nil
 }
 
 // warmAXHashTimeout is the evidence budget for one warm tree hash
@@ -390,6 +457,13 @@ func encodeTap(p map[string]any) (map[string]any, error) {
 	y, err := coordField(p, "y")
 	if err != nil {
 		return nil, err
+	}
+	if _, held, err := durationMSField(p); err != nil {
+		return nil, err
+	} else if held {
+		// Long-press routes through the cold handler, whose dispatchHID
+		// still prefers the resident helper's long_press op.
+		return nil, errColdOnly
 	}
 	return map[string]any{"x": x, "y": y}, nil
 }

@@ -12,9 +12,9 @@ import (
 	"github.com/BariBariGood/manzanas/internal/journal"
 )
 
-// cmdJournal implements `manzanas journal tail|upload|export`.
+// cmdJournal implements `manzanas journal tail|upload|export|to-spec`.
 func cmdJournal(ctx context.Context, app *appEnv, args []string) error {
-	sub, err := requireArg(args, 0, "journal subcommand (tail|upload|export)")
+	sub, err := requireArg(args, 0, "journal subcommand (tail|upload|export|to-spec)")
 	if err != nil {
 		return err
 	}
@@ -25,6 +25,8 @@ func cmdJournal(ctx context.Context, app *appEnv, args []string) error {
 		return journalUpload(ctx, app, args[1:])
 	case "export":
 		return journalExport(ctx, app, args[1:])
+	case "to-spec":
+		return journalToSpec(ctx, app, args[1:])
 	default:
 		return fmt.Errorf("unknown journal subcommand %q", sub)
 	}
@@ -90,6 +92,73 @@ func journalExport(ctx context.Context, app *appEnv, args []string) error {
 	}
 	_, err = app.stdout.Write(rendered)
 	return err
+}
+
+// journalToSpec exports a journaled run as a declarative YAML run-spec
+// (record -> replay): each recorded action becomes a run step, ready for
+// `manzanas run`. It reads from the daemon by default, or offline straight
+// from a journal directory with --journal-dir, like journal export.
+func journalToSpec(ctx context.Context, app *appEnv, args []string) error {
+	runID, err := requireArg(args, 0, "RUN_ID")
+	if err != nil {
+		return err
+	}
+	fs := app.newFlagSet("journal to-spec")
+	journalDir := fs.String("journal-dir", "", "read offline from this journal directory (e.g. ~/.manzanasd/journal) instead of the daemon")
+	outPath := fs.String("o", "", "write to FILE instead of stdout")
+	keepObs := fs.Bool("keep-observations", false, "keep pure-read steps (observe, screenshot, audit, wait_*) instead of dropping them")
+	includeFailed := fs.Bool("include-failed", false, "keep the first failed step and everything after it")
+	withExpectations := fs.Bool("with-expectations", false, "attach expect blocks (text set + DHash) from the run's recorded step expectations (record_expectations: true)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("journal to-spec: unexpected argument %q", fs.Arg(0))
+	}
+
+	meta, entries, err := journalLoad(ctx, app, runID, *journalDir, "journal to-spec")
+	if err != nil {
+		return err
+	}
+	spec, err := journal.ExportSpecYAML(meta, entries, journal.SpecOptions{
+		KeepObservations: *keepObs,
+		IncludeFailed:    *includeFailed,
+		WithExpectations: *withExpectations,
+	})
+	if err != nil {
+		return fmt.Errorf("journal to-spec: %w", err)
+	}
+	if *outPath != "" {
+		return os.WriteFile(*outPath, spec, 0o644)
+	}
+	_, err = app.stdout.Write(spec)
+	return err
+}
+
+// journalLoad fetches a run's metadata and full entry list, either from
+// the daemon or offline from an on-disk journal directory.
+func journalLoad(ctx context.Context, app *appEnv, runID, journalDir, op string) (journal.RunMeta, []journal.Entry, error) {
+	if journalDir == "" {
+		return app.client.JournalExport(ctx, runID)
+	}
+	// NewFileStore creates the directory (it serves the daemon's write
+	// path); a read-only export must fail loudly on a mistyped one.
+	if _, statErr := os.Stat(journalDir); statErr != nil {
+		return journal.RunMeta{}, nil, fmt.Errorf("%s: open %s: %w", op, journalDir, statErr)
+	}
+	store, err := journal.NewFileStore(journalDir)
+	if err != nil {
+		return journal.RunMeta{}, nil, fmt.Errorf("%s: open %s: %w", op, journalDir, err)
+	}
+	entries, err := store.Read(ctx, runID, 0, 0)
+	if err != nil {
+		return journal.RunMeta{}, nil, fmt.Errorf("%s: %w", op, err)
+	}
+	meta, err := store.ReadMeta(runID)
+	if err != nil {
+		return journal.RunMeta{}, nil, fmt.Errorf("%s: %w", op, err)
+	}
+	return meta, entries, nil
 }
 
 // journalTail maps to GET /v0/journal/{run_id}: prints existing entries,

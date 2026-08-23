@@ -11,8 +11,9 @@ export MANZANASD_ADDR=mac-host:7433   # or pass --daemon mac-host:7433
 ## CLI in 60 seconds
 
 ```sh
+manzanas doctor                                            # diagnose the setup; failures carry fixes
 manzanas targets                                           # what's in the fleet
-manzanas lease acquire --labels ios26 --agent me --wait    # claim a simulator
+manzanas lease acquire --labels ios26 --agent me --wait    # claim a simulator (--ttl takes seconds)
 export MANZANAS_LEASE=lse_...                              # from the output
 manzanas boot UDID --lease $MANZANAS_LEASE                  # boot it
 manzanas observe --lease $MANZANAS_LEASE                    # compact a11y tree
@@ -20,10 +21,14 @@ manzanas tap 200 400 --lease $MANZANAS_LEASE
 manzanas type 'hello' --lease $MANZANAS_LEASE
 manzanas screenshot -o shot.png --lease $MANZANAS_LEASE
 manzanas lease release $MANZANAS_LEASE                      # hand it back
+manzanas run spec.yaml -o evidence.md                       # or: all of the above as one YAML run
 ```
 
-Add `--json` for machine-readable output. Every command maps 1:1 onto the
-wire protocol (`proto/PROTOCOL.md`).
+Add `--json` for machine-readable output. Positional arguments come
+first, flags after (`manzanas tap 200 400 --lease ...`; use `--` before
+a positional that starts with a dash). Every command maps 1:1 onto the
+wire protocol (`proto/PROTOCOL.md`); `manzanas run` is the one-call run
+primitive ([docs/runs.md](../docs/runs.md)).
 
 The same commands work pointed at a `manzanas-broker` fleet endpoint:
 acquire places the lease on some Mac, and every lease-scoped command

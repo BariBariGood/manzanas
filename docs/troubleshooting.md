@@ -1,5 +1,48 @@
 # Troubleshooting
 
+Start with `manzanas doctor` (`--json` for CI, `--target UDID` to scope
+the per-device checks): it diagnoses the whole setup in one shot —
+daemon, simulator toolchain and iOS runtimes, devicectl, the run
+journal, boot gates, per-device WDA reachability, and the mirrord
+helper's capability probes (which name the exact binary a missing
+Screen Recording / Accessibility grant must go to). Every failing check
+carries a one-line fix, and the exit code is non-zero when anything
+fails. If the daemon itself is down, doctor says so and how to start
+it.
+
+For first-time host setup — and after any helper upgrade — run
+`manzanas setup`: a guided, idempotent wizard that installs/updates the
+GUI helpers (mirrord, simbridge) at their stable paths, probes which TCC
+grants are missing, and walks through granting each one (deep-linking
+the exact System Settings pane when macOS won't re-prompt). It never
+triggers a permission prompt or swaps a grant-holding binary without
+asking first; `manzanas setup --report` detects only — no installs, no
+Settings windows, no extra probe runs. Detection asks the helper for a
+real capability probe, so on a host where the helper has never been
+asked, macOS may still show its one-time permission dialog.
+
+## mirrord permissions lost after a rebuild/upgrade
+
+macOS keys TCC grants to the binary's code signature, not just its
+path: swapping in a rebuilt `~/bin/mirrord` silently invalidates
+Accessibility and Screen & System Audio Recording even though System
+Settings still shows the toggles on. Fixes:
+
+- **Sign with a stable identity** — both `manzanas setup` and
+  `helpers/mirrord/build.sh` sign every build with the best codesign
+  identity in the keychain (`MIRRORD_SIGN_IDENTITY`/`--sign-identity`
+  override): the grant follows the identity + identifier, so
+  same-identity rebuilds keep working. `manzanas setup` refuses to
+  install unsigned; if no identity is found, unlock the signing
+  keychain (`security unlock-keychain <keychain>`) and re-run.
+- **Ad-hoc-signed builds** (`--sign-identity -`, only if you accept
+  the cost): after every swap, re-toggle both grants OFF and back ON
+  for `~/bin/mirrord` in System Settings → Privacy & Security.
+- `manzanas setup` skips the swap entirely when the installed binary is
+  already the same build (same cdhash), so re-running it never costs a
+  grant. Verify with `manzanas doctor` — it probes real capability,
+  never the (frequently stale) TCC database.
+
 Symptoms → causes → fixes, for operators and agents. Error codes are the
 protocol's JSON envelope (`{"code","message"}`, [PROTOCOL.md](../proto/PROTOCOL.md) §1).
 

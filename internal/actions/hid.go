@@ -26,10 +26,29 @@ func handleTap(ctx context.Context, b *AXeBackend, udid string, p map[string]any
 	if err != nil {
 		return nil, err
 	}
+	dur, held, err := durationMSField(p)
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		sec := dur / 1000
+		if err := b.dispatchHID(ctx, udid, "long_press",
+			map[string]any{"x": x, "y": y, "duration": sec},
+			"touch", "-x", fmtNum(x), "-y", fmtNum(y), "--down", "--up", "--delay", fmtNum(sec)); err != nil {
+			return nil, err
+		}
+		return map[string]any{"x": x, "y": y, "duration_ms": dur}, nil
+	}
 	if _, err := b.axe(ctx, udid, "tap", "-x", fmtNum(x), "-y", fmtNum(y)); err != nil {
 		return nil, err
 	}
 	return map[string]any{"x": x, "y": y}, nil
+}
+
+// handleScroll rejects the mirror-only wheel-scroll kind on simulators:
+// AXe has no wheel-event equivalent; use swipe instead.
+func handleScroll(ctx context.Context, b *AXeBackend, udid string, p map[string]any) (map[string]any, error) {
+	return nil, notImplemented("scroll (wheel events) is only implemented on mirror-backed devices; use swipe")
 }
 
 func handleSwipe(ctx context.Context, b *AXeBackend, udid string, p map[string]any) (map[string]any, error) {
@@ -264,6 +283,23 @@ func buttonNames() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// durationMSField extracts the optional long-press duration from a tap
+// payload. Every backend holds the press synchronously (the mirrord and
+// simbridge helpers are single serial resources; WDA runs the W3C action
+// chain to completion), so an unbounded duration would wedge every later
+// action — the same 1–10000ms bound applies everywhere.
+func durationMSField(p map[string]any) (float64, bool, error) {
+	d, ok := p["duration_ms"]
+	if !ok {
+		return 0, false, nil
+	}
+	dv, err := toNum(d)
+	if err != nil || dv < 1 || dv > 10000 {
+		return 0, false, badRequest("duration_ms must be a number between 1 and 10000")
+	}
+	return dv, true, nil
 }
 
 // coordField extracts a required screen coordinate; negative values are

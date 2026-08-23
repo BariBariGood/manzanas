@@ -70,7 +70,8 @@ func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string
 	deadline := start.Add(timeout)
 	seen := false
 	var lastObs observation
-	scrolls, polls := 0, 0
+	scrolls, polls, noEffects := 0, 0, 0
+	var prevSet map[string]struct{}
 	for {
 		if time.Now().After(deadline) {
 			return nil, scrollFailure(pr, seen, scrolls, time.Since(start), lastObs)
@@ -87,6 +88,15 @@ func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string
 			return nil, err
 		}
 		lastObs = obs
+		// The helper's no-change verdict is fallible (it can miss a late
+		// render), so corroborate it: a masked text set that differs from
+		// the previous observation means the screen really moved and the
+		// no-effect streak resets.
+		set := textSet(obs.nodes, obs.viewport)
+		if prevSet != nil && jaccard(set, prevSet) < 1 {
+			noEffects = 0
+		}
+		prevSet = set
 		hit, rerr := pr.resolve(obs.nodes, obs.viewport)
 		if rerr != nil && !errors.Is(rerr, errNoMatch) {
 			// A hard resolution error (e.g. ambiguous_match) cannot be
@@ -114,12 +124,26 @@ func elemScrollTo(ctx context.Context, d scrollDriver, udid string, p map[string
 				dir = toward
 			}
 		}
-		if scrolls >= maxScrolls || time.Now().After(deadline) {
+		// Two consecutive verified no-change swipes on a screen that
+		// really held still mean the end of the list; this observation
+		// was the confirming look at the screen.
+		if scrolls >= maxScrolls || noEffects >= endOfListNonMoves || time.Now().After(deadline) {
 			return nil, scrollFailure(pr, seen, scrolls, time.Since(start), lastObs)
 		}
 		x1, y1, x2, y2 := swipeForDirection(region, dir)
 		if err := d.swipeXY(ctx, udid, x1, y1, x2, y2); err != nil {
-			return nil, err
+			if !errors.Is(err, errGestureNoEffect) {
+				return nil, err
+			}
+			// A pixel-verified no-change swipe is how the end of the
+			// list looks under per-action verification: not fatal, but
+			// after two in a row the list is done. The verdict can miss
+			// a late render, so the loop still takes one more
+			// observation (and match attempt) at the top before the
+			// counter ends it with the documented failure shape.
+			noEffects++
+		} else {
+			noEffects = 0
 		}
 		scrolls++
 		// Let the scroll settle before the next observation.

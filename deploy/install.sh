@@ -122,6 +122,7 @@ for i in $(seq 1 30); do
   if curl -fsS "http://localhost:$PORT/v0/healthz" >/dev/null 2>&1; then
     echo "==> manzanasd is healthy: $(curl -fsS "http://localhost:$PORT/v0/healthz")"
     echo "==> installed. logs: $LOG_DIR"
+    echo "==> next: run 'manzanas setup' to install the GUI helpers and walk the TCC grants (or 'manzanas setup --report' to just check)"
     case ":$PATH:" in
       *":$HOME/bin:"*) ;;
       *) echo "==> note: ~/bin is not on your PATH; run ~/bin/manzanasd directly or add: export PATH=\"\$HOME/bin:\$PATH\"" ;;

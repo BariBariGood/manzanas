@@ -223,6 +223,57 @@ func (s *Server) handleRenewLease(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handlePauseLease pauses an active lease for human preemption: action
+// dispatch on the lease is blocked (except read-only observation) until
+// resume. The TTL clock keeps running — the holder must keep renewing.
+func (s *Server) handlePauseLease(w http.ResponseWriter, r *http.Request) {
+	var req proto.PauseLeaseRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	l, err := s.leases.Pause(r.PathValue("id"), req.Reason)
+	switch {
+	case errors.Is(err, lease.ErrNotFound):
+		writeError(w, http.StatusNotFound, proto.ErrNotFound, "lease not found")
+	case errors.Is(err, lease.ErrNotActive):
+		writeError(w, http.StatusGone, proto.ErrLeaseExpired, "lease is not active")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, proto.ErrInternal, err.Error())
+	default:
+		params := map[string]any{}
+		if req.Reason != "" {
+			params["reason"] = req.Reason
+		}
+		s.record(r.Context(), journal.Event{
+			Kind: "lease", LeaseID: l.ID, AgentID: l.AgentID, Action: proto.MethodPauseLease,
+			Params: params, Status: "ok",
+		})
+		s.events.broadcast(proto.EventLeasePaused, l)
+		writeJSON(w, http.StatusOK, l)
+	}
+}
+
+// handleResumeLease clears a lease's pause, unblocking action dispatch.
+// Resuming a non-paused active lease is a no-op success.
+func (s *Server) handleResumeLease(w http.ResponseWriter, r *http.Request) {
+	l, err := s.leases.Resume(r.PathValue("id"))
+	switch {
+	case errors.Is(err, lease.ErrNotFound):
+		writeError(w, http.StatusNotFound, proto.ErrNotFound, "lease not found")
+	case errors.Is(err, lease.ErrNotActive):
+		writeError(w, http.StatusGone, proto.ErrLeaseExpired, "lease is not active")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, proto.ErrInternal, err.Error())
+	default:
+		s.record(r.Context(), journal.Event{
+			Kind: "lease", LeaseID: l.ID, AgentID: l.AgentID, Action: proto.MethodResumeLease,
+			Status: "ok",
+		})
+		s.events.broadcast(proto.EventLeaseResumed, l)
+		writeJSON(w, http.StatusOK, l)
+	}
+}
+
 func (s *Server) handleReleaseLease(w http.ResponseWriter, r *http.Request) {
 	prior, priorErr := s.leases.Get(r.PathValue("id"))
 	l, err := s.leases.Release(r.Context(), r.PathValue("id"))

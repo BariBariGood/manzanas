@@ -176,13 +176,31 @@ func (b *DeviceBackend) observeOnce(ctx context.Context, udid string, _ bool) (o
 	return observation{nodes: nodes, viewport: wdaViewport(src)}, nil
 }
 
-// swipeXY implements scrollDriver via WDA (or the mirror helper).
+// swipeXY implements scrollDriver via WDA (or the mirror helper). Its
+// only callers are the scrolling loops, where a swipe that verifiably
+// changed nothing is the shape of the end of a list, not a failure —
+// so a pixel-verified no-change surfaces as errGestureNoEffect for the
+// loops to fold into their non-move accounting. verify=unavailable
+// (nobody could look) stays a hard error via mirrorAckCheck.
 func (b *DeviceBackend) swipeXY(ctx context.Context, udid string, x1, y1, x2, y2 float64) error {
 	if m := b.mirrorFor(udid); m != nil {
-		if err := m.Swipe(ctx, x1, y1, x2, y2, 500*time.Millisecond); err != nil {
+		ack, err := m.SwipeAck(ctx, x1, y1, x2, y2, 500*time.Millisecond)
+		if err != nil {
+			if gestureNoEffect(err) {
+				return errGestureNoEffect
+			}
 			return mirrorFail("swipe", err)
 		}
-		return nil
+		noteMirrorGestureAck(ctx, ack)
+		if ack.Unverified() && ack.Verify != "unavailable" {
+			// The soft return still owes the focused-fallback warning
+			// mirrorAckCheck would have logged.
+			if ack.Mode != "" {
+				warnFocusedMirrorInput(udid, "swipe", ack)
+			}
+			return errGestureNoEffect
+		}
+		return mirrorAckCheck(udid, "swipe", ack)
 	}
 	c, err := b.wdaFor(udid)
 	if err != nil {
@@ -197,10 +215,12 @@ func (b *DeviceBackend) swipeXY(ctx context.Context, udid string, x1, y1, x2, y2
 // tapXY implements elementDriver via WDA (or the mirror helper).
 func (b *DeviceBackend) tapXY(ctx context.Context, udid string, x, y float64) error {
 	if m := b.mirrorFor(udid); m != nil {
-		if err := m.Tap(ctx, x, y); err != nil {
+		ack, err := m.TapAck(ctx, x, y)
+		if err != nil {
 			return mirrorFail("tap", err)
 		}
-		return nil
+		noteMirrorGestureAck(ctx, ack)
+		return mirrorAckCheck(udid, "tap", ack)
 	}
 	c, err := b.wdaFor(udid)
 	if err != nil {
@@ -228,8 +248,13 @@ func (b *DeviceBackend) typeInto(ctx context.Context, udid, text string, opts ty
 		if err := validateMirrorTypeOpts(opts); err != nil {
 			return 0, err
 		}
-		if err := m.Type(ctx, text); err != nil {
+		ack, err := m.TypeAck(ctx, text)
+		if err != nil {
 			return 0, mirrorFail("type", err)
+		}
+		noteMirrorGestureAck(ctx, ack)
+		if err := mirrorAckCheck(udid, "type", ack); err != nil {
+			return 0, err
 		}
 		return len([]rune(text)), nil
 	}

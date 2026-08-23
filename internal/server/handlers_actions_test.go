@@ -83,6 +83,29 @@ func TestActionJournalsAXHashes(t *testing.T) {
 	}
 }
 
+func TestActionJournalsWhitelistedExtras(t *testing.T) {
+	backend := &recordingBackend{result: map[string]any{
+		"resolver": "ax", "verified": true, "fingerprint": "fp:123",
+		"unlisted": "must-not-lift",
+	}}
+	ts, store := newJournaledActionServer(t, backend)
+	l := acquire(t, ts)
+
+	var res proto.ActionResult
+	resp := doJSON(t, "POST", ts.URL+"/v0/actions",
+		proto.ActionRequest{LeaseID: l.ID, Kind: "tap_element", Payload: map[string]any{"label": "General"}}, &res)
+	if resp.StatusCode != 200 || !res.OK {
+		t.Fatalf("dispatch: %d %+v", resp.StatusCode, res)
+	}
+	e := lastEntryOfKind(t, store, l.ID, "action")
+	if e.Payload["resolver"] != "ax" || e.Payload["verified"] != true || e.Payload["fingerprint"] != "fp:123" {
+		t.Fatalf("entry payload = %+v, want lifted resolver/verified/fingerprint", e.Payload)
+	}
+	if _, ok := e.Payload["unlisted"]; ok {
+		t.Fatal("non-whitelisted result keys must not be lifted")
+	}
+}
+
 func TestScreenshotJournaledAsArtifact(t *testing.T) {
 	png := "\x89PNG\r\n\x1a\nfake"
 	backend := &recordingBackend{result: map[string]any{
@@ -321,5 +344,27 @@ func TestActionRequiresKind(t *testing.T) {
 		if !strings.Contains(e.Message, want) {
 			t.Fatalf("kind-required message %q must mention %q", e.Message, want)
 		}
+	}
+}
+
+// Mirror input evidence (input_mode/verified/verify) is lifted from the
+// action result into the journal entry, so a journal reader can tell a
+// focus-free verified composite from a focus-stealing or unproven one.
+func TestActionJournalsMirrorInputEvidence(t *testing.T) {
+	backend := &recordingBackend{result: map[string]any{
+		"input_mode": "background", "verified": true, "verify": "pixel-delta",
+	}}
+	ts, store := newJournaledActionServer(t, backend)
+	l := acquire(t, ts)
+
+	var res proto.ActionResult
+	resp := doJSON(t, "POST", ts.URL+"/v0/actions",
+		proto.ActionRequest{LeaseID: l.ID, Kind: "tap_element", Payload: map[string]any{"label": "Sign In"}}, &res)
+	if resp.StatusCode != 200 || !res.OK {
+		t.Fatalf("dispatch: %d %+v", resp.StatusCode, res)
+	}
+	e := lastEntryOfKind(t, store, l.ID, "action")
+	if e.Payload["input_mode"] != "background" || e.Payload["verified"] != true || e.Payload["verify"] != "pixel-delta" {
+		t.Fatalf("entry payload = %+v, want lifted input_mode/verified/verify", e.Payload)
 	}
 }

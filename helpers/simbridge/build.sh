@@ -68,4 +68,27 @@ swiftc -O -parse-as-library \
   -o "$OUT" \
   "$SRC_DIR/Simbridge.swift"
 
-echo "built $OUT (frameworks: $FRAMEWORKS, rpath: $RPATH)"
+# simbridge holds no TCC grants, so default to ad-hoc signing and never prompt
+# for a locked keychain. Set SIMBRIDGE_SIGN_IDENTITY to a specific identity for
+# stable signing, or set it to "auto" to discover an available identity.
+IDENTIFIER=com.baribarigood.manzanasd.simbridge
+IDENTITY="${SIMBRIDGE_SIGN_IDENTITY:--}"
+if [ "$IDENTITY" = "auto" ]; then
+  IDS="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  for PREFIX in "Developer ID Application:" "Apple Development:" "Apple Distribution:"; do
+    IDENTITY="$(printf '%s\n' "$IDS" | sed -n "s/.*\"\(${PREFIX}[^\"]*\)\".*/\1/p" | head -n1)"
+    [ -n "$IDENTITY" ] && break
+  done
+fi
+# Unlike mirrord, simbridge holds no TCC grants, so a missing identity
+# downgrades to ad-hoc instead of failing the build (release/CI runners
+# have no unlocked keychain).
+if [ -z "$IDENTITY" ]; then
+  echo "warning: no stable codesign identity found — signing ad-hoc." >&2
+  echo "(simbridge holds no TCC grants, so this is safe; set" >&2
+  echo "SIMBRIDGE_SIGN_IDENTITY for stable signing.)" >&2
+  IDENTITY=-
+fi
+codesign -f -s "$IDENTITY" --identifier "$IDENTIFIER" "$OUT"
+
+echo "built $OUT (frameworks: $FRAMEWORKS, rpath: $RPATH, signed: $IDENTITY, identifier $IDENTIFIER)"

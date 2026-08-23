@@ -34,6 +34,14 @@ steps:
     action: audit
     continue_on_error: true
   - action: screenshot
+  - action: tap_element
+    with: {label: Reset}
+    expect:
+      texts: [mock login, username, password]
+      jaccard_min: 0.8
+      fingerprint: a5a5a5a5a5a5a5a5
+      max_hash_distance: 6
+strict_drift: true
 artifacts:
   final_screenshot: true
   export: true
@@ -48,7 +56,7 @@ func TestParseFullSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Name != "login-smoke" || len(spec.Steps) != 5 {
+	if spec.Name != "login-smoke" || len(spec.Steps) != 6 {
 		t.Fatalf("parsed %+v", spec)
 	}
 	if spec.Target.Runtime != "iOS 26.5" || spec.Target.DeviceType != "iPhone 17 Pro" {
@@ -68,6 +76,14 @@ func TestParseFullSpec(t *testing.T) {
 	}
 	if spec.Artifacts.FinalScreenshot == nil || !*spec.Artifacts.FinalScreenshot {
 		t.Fatalf("artifacts %+v", spec.Artifacts)
+	}
+	if !spec.StrictDrift {
+		t.Fatalf("strict_drift not parsed: %+v", spec)
+	}
+	exp := spec.Steps[5].Expect
+	if exp == nil || len(exp.Texts) != 3 || exp.JaccardMin != 0.8 ||
+		exp.Fingerprint != "a5a5a5a5a5a5a5a5" || exp.MaxHashDistance == nil || *exp.MaxHashDistance != 6 {
+		t.Fatalf("expect %+v", exp)
 	}
 }
 
@@ -90,6 +106,14 @@ func TestValidate(t *testing.T) {
 		{"empty app", "target: {labels: [a]}\napp: {launch: false}", "app requires"},
 		{"maestro only is schema-valid", "target: {labels: [a]}\nsteps: [{maestro_flow: f.yaml}]", ""},
 		{"udid only", "target: {udid: UDID-1}", ""},
+		{"empty expect", "target: {labels: [a]}\nsteps: [{action: tap, expect: {}}]", "requires texts and/or fingerprint"},
+		{"blank expect text", "target: {labels: [a]}\nsteps: [{action: tap, expect: {texts: ['  ']}}]", "must be non-empty"},
+		{"jaccard out of range", "target: {labels: [a]}\nsteps: [{action: tap, expect: {texts: [ok], jaccard_min: 1.5}}]", "jaccard_min"},
+		{"jaccard without texts", "target: {labels: [a]}\nsteps: [{action: tap, expect: {fingerprint: a5a5a5a5a5a5a5a5, jaccard_min: 0.5}}]", "requires texts"},
+		{"bad fingerprint", "target: {labels: [a]}\nsteps: [{action: tap, expect: {fingerprint: not-hex}}]", "64-bit hex"},
+		{"hash distance out of range", "target: {labels: [a]}\nsteps: [{action: tap, expect: {fingerprint: a5a5a5a5a5a5a5a5, max_hash_distance: 65}}]", "[0, 64]"},
+		{"hash distance without fingerprint", "target: {labels: [a]}\nsteps: [{action: tap, expect: {texts: [ok], max_hash_distance: 3}}]", "requires fingerprint"},
+		{"valid expect", "target: {labels: [a]}\nsteps: [{action: tap, expect: {texts: [ok], fingerprint: a5a5a5a5a5a5a5a5}}]", ""},
 	}
 	for _, tc := range cases {
 		_, err := Parse([]byte(tc.yaml))

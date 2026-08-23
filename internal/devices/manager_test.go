@@ -1,8 +1,10 @@
 package devices
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BariBariGood/manzanas/internal/actions"
 	"github.com/BariBariGood/manzanas/proto"
@@ -122,7 +124,7 @@ func TestManagerAppliesAndRemovesMirror(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if m.wiredMirror["UD1"] != "/tmp/m.sock" || len(m.sups) != 0 {
+	if m.wiredMirror["UD1"] != (mirrorWiring{socket: "/tmp/m.sock"}) || len(m.sups) != 0 {
 		t.Fatalf("mirror not wired (or supervisor started): wiredMirror=%v sups=%d", m.wiredMirror, len(m.sups))
 	}
 	if got := m.Current().Mirror["UD1"]; got != (proto.DeviceMirrorConfig{Socket: "/tmp/m.sock"}) {
@@ -142,6 +144,28 @@ func TestManagerAppliesAndRemovesMirror(t *testing.T) {
 	}
 	if len(m.wiredMirror) != 0 {
 		t.Errorf("disabled config wired a mirror client: %v", m.wiredMirror)
+	}
+}
+
+func TestManagerWiresMirrorAllowInput(t *testing.T) {
+	m, _ := testManager()
+	defer m.Close()
+	if err := m.Apply(proto.DevicesConfig{Enabled: true, Mirror: map[string]proto.DeviceMirrorConfig{
+		"UD1": {Socket: "/tmp/m.sock", AllowInput: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if m.wiredMirror["UD1"] != (mirrorWiring{socket: "/tmp/m.sock", allowInput: true}) {
+		t.Fatalf("wiredMirror = %+v", m.wiredMirror)
+	}
+	// Flipping allow_input alone rewires the backend (same socket).
+	if err := m.Apply(proto.DevicesConfig{Enabled: true, Mirror: map[string]proto.DeviceMirrorConfig{
+		"UD1": {Socket: "/tmp/m.sock"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if m.wiredMirror["UD1"] != (mirrorWiring{socket: "/tmp/m.sock"}) {
+		t.Fatalf("wiredMirror after gate flip = %+v", m.wiredMirror)
 	}
 }
 
@@ -169,5 +193,75 @@ func TestManagerCurrentIsACopy(t *testing.T) {
 	got.WDA["UD1"] = proto.DeviceWDAConfig{URL: "mutated"}
 	if m.Current().WDA["UD1"].URL != "http://127.0.0.1:8100" {
 		t.Error("Current returned a shared map")
+	}
+}
+
+func TestManagerPublishesMirrorsToRegistry(t *testing.T) {
+	m, _ := testManager()
+	defer m.Close()
+	var published []map[string]string
+	m.SetMirrorPublisher(func(mirrors map[string]string) { published = append(published, mirrors) })
+	if err := m.Apply(proto.DevicesConfig{Enabled: true, Mirror: map[string]proto.DeviceMirrorConfig{
+		"UD1": {Socket: "/tmp/m.sock"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(published) != 1 || published[0]["UD1"] != "/tmp/m.sock" {
+		t.Fatalf("published = %+v", published)
+	}
+	// An empty socket publishes the default.
+	if err := m.Apply(proto.DevicesConfig{Enabled: true, Mirror: map[string]proto.DeviceMirrorConfig{
+		"UD1": {},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(published) != 2 || published[1]["UD1"] != DefaultMirrorSocket() {
+		t.Fatalf("published = %+v", published)
+	}
+	// Removal (and disable) publishes an empty set so the registry
+	// forgets the target.
+	if err := m.Apply(proto.DevicesConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(published) != 3 || len(published[2]) != 0 {
+		t.Fatalf("published = %+v", published)
+	}
+}
+
+func TestManagerDisabledConfigPublishesNoMirrors(t *testing.T) {
+	m, _ := testManager()
+	defer m.Close()
+	var published []map[string]string
+	m.SetMirrorPublisher(func(mirrors map[string]string) { published = append(published, mirrors) })
+	if err := m.Apply(proto.DevicesConfig{Enabled: false, Mirror: map[string]proto.DeviceMirrorConfig{
+		"UD1": {Socket: "/tmp/m.sock"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(published) != 1 || len(published[0]) != 0 {
+		t.Fatalf("disabled config published mirrors: %+v", published)
+	}
+}
+
+func TestManagerWarnsWhenMirrorUnknownToDevicectl(t *testing.T) {
+	m, _ := testManager()
+	defer m.Close()
+	checked := make(chan string, 1)
+	m.SetMirrorKnownCheck(func(ctx context.Context, udid string) bool {
+		checked <- udid
+		return false
+	})
+	if err := m.Apply(proto.DevicesConfig{Enabled: true, Mirror: map[string]proto.DeviceMirrorConfig{
+		"UD1": {Socket: "/tmp/m.sock"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case udid := <-checked:
+		if udid != "UD1" {
+			t.Fatalf("checked %q, want UD1", udid)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("mirror presence check never ran")
 	}
 }

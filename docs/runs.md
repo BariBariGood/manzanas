@@ -126,6 +126,8 @@ steps:
 - `action: batch` runs `with.actions` (a list of `{kind, payload}`)
   through the batch endpoint in one step; `with.stop_on_error` defaults
   to `true`.
+- `expect` declares the step's expected post-state for replay drift
+  detection — see [Drift detection](#drift-detection-expect) below.
 
 ### `artifacts`
 
@@ -162,6 +164,76 @@ Run resources follow the v0 posture (tailnet-only, no auth): `GET
 /v0/runs` and `GET /v0/runs/{id}` serve the full run — spec, lease ID,
 and journal export — to any caller, like the lease and journal APIs.
 Scoping runs to their `agent_id` lands with the auth slice.
+
+## Run verdicts
+
+A finished run whose steps stage ran carries `verdict`, grading how much
+of the run was actually *verified* — independent of passed/failed:
+
+| verdict | meaning |
+| --- | --- |
+| `trusted` | every executed mutating step's postcondition was verified and nothing failed verification |
+| `degraded` | verification signals exist but coverage is incomplete or negative (unverified mutating steps, a `verified:false` report, a failed assert, or drift) |
+| `unverified` | the run carried no verification signals at all |
+
+A mutating step counts as verified when its action reported
+`verified:true` (the opt-in `verify: true` payload flag on tap/swipe),
+its `expect` drift check passed, or a following passing `assert_*` step
+(before the next mutating step) confirmed the postcondition. Pure-read
+steps (`observe`, `screenshot`, `audit`, `wait_*`, `assert_*`) need no
+verification of their own; `batch` steps are conservatively mutating.
+
+The verdict is also mirrored into the journal (the `runs.finish` entry
+and the run meta), so `journal` tooling can grade a replay without the
+run resource. Step results additively carry `verified`, `drifted`, and
+`drift_detail`.
+
+## Drift detection (`expect`)
+
+A step may declare its expected post-state; after the step succeeds the
+engine re-observes the screen and compares:
+
+```yaml
+steps:
+  - action: tap_element
+    with: {label: Sign In}
+    expect:
+      texts: [welcome, agent!, sign in, wi-fi]   # masked screen text set
+      jaccard_min: 0.7           # min Jaccard overlap (default 0.7)
+      fingerprint: a5a5a5a5a5a5a5a5   # 64-bit DHash hex of the masked screen
+      max_hash_distance: 10      # max Hamming distance (default 10)
+```
+
+At least one of `texts` / `fingerprint` is required. Text sets are
+normalized (lowercased, trimmed, short runs dropped) and the volatile
+top/bottom viewport bands (status bar, home indicator) are masked from
+both the text set and the DHash. A mismatch is **report-only**: the step
+result gets `drifted: true` plus `drift_detail`, and the run verdict is
+capped at `degraded` — the run still passes. Set `strict_drift: true` at
+the spec top level to fail the run (`assertion_failed`) at the first
+drifted step instead. If the comparison capture itself fails, the check
+is skipped (`drift_detail` says why) and contributes no signal.
+
+## Record → replay
+
+A journaled run can be exported back into a run-spec with
+`manzanas journal to-spec RUN_ID -o replay.yaml` and re-executed with
+`manzanas run replay.yaml`. See "Exporting a replayable run-spec" in
+[journal.md](journal.md) for the mapping and filtering rules.
+
+To make the replay drift-aware, record with `record_expectations: true`
+in the spec — after every successful mutating step the engine journals a
+post-step observation (masked text set + screen DHash) — then export
+with:
+
+```sh
+manzanas journal to-spec RUN_ID --with-expectations -o replay.yaml
+```
+
+Each exported step whose observation was captured gets an `expect` block,
+so `manzanas run replay.yaml` detects UI drift (and a clean replay earns
+a `trusted` verdict). Add `strict_drift: true` to the exported spec to
+turn drift into a hard failure.
 
 ## Reserved schema (documented, not yet implemented)
 

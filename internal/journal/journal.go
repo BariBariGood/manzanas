@@ -31,6 +31,10 @@ type RunMeta struct {
 	AppVersions   map[string]string `json:"app_versions,omitempty"` // bundle id -> version, when known
 	DaemonVersion string            `json:"daemon_version,omitempty"`
 	CreatedAt     time.Time         `json:"created_at"`
+	// Verdict is the run's verification grade (trusted | degraded |
+	// unverified), stamped by the runs engine when a one-call run
+	// finishes (PROTOCOL.md §9). Empty for plain lease sessions.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 // RunSummary is one row of a journal listing.

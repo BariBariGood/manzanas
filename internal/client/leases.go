@@ -45,6 +45,32 @@ func (c *Client) ReleaseLease(ctx context.Context, id string) (proto.Lease, erro
 	return l, err
 }
 
+// PauseLease calls POST /v0/leases/{id}/pause on the daemon owning the
+// lease. Brokers don't serve this route, so it goes through leaseDo,
+// which recovers from a broker route miss by resolving the lease's
+// host_addr and retrying against the owning daemon.
+func (c *Client) PauseLease(ctx context.Context, id, reason string) (proto.Lease, error) {
+	var l proto.Lease
+	err := c.leaseDo(ctx, id, http.MethodPost, "/v0/leases/"+url.PathEscape(id)+"/pause",
+		proto.PauseLeaseRequest{Reason: reason}, &l)
+	if err == nil {
+		c.noteLease(l)
+	}
+	return l, err
+}
+
+// ResumeLease calls POST /v0/leases/{id}/resume on the daemon owning the
+// lease (through leaseDo — see PauseLease).
+func (c *Client) ResumeLease(ctx context.Context, id string) (proto.Lease, error) {
+	var l proto.Lease
+	err := c.leaseDo(ctx, id, http.MethodPost, "/v0/leases/"+url.PathEscape(id)+"/resume",
+		nil, &l)
+	if err == nil {
+		c.noteLease(l)
+	}
+	return l, err
+}
+
 // ListLeases calls GET /v0/leases.
 func (c *Client) ListLeases(ctx context.Context) ([]proto.Lease, error) {
 	var out struct {

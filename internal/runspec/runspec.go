@@ -7,6 +7,8 @@ package runspec
 import (
 	"bytes"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -42,9 +44,47 @@ func Validate(spec proto.RunSpec) error {
 		if st.Action != "" && st.MaestroFlow != "" {
 			return fmt.Errorf("run-spec: steps[%d]: action and maestro_flow are mutually exclusive", i)
 		}
+		if err := validateExpect(i, st.Expect); err != nil {
+			return err
+		}
 	}
 	if app := spec.App; app != nil && app.Path == "" && app.BundleID == "" {
 		return fmt.Errorf("run-spec: app requires path and/or bundle_id")
+	}
+	return nil
+}
+
+// validateExpect checks one step's optional expect block (drift check).
+func validateExpect(i int, e *proto.RunExpect) error {
+	if e == nil {
+		return nil
+	}
+	if len(e.Texts) == 0 && e.Fingerprint == "" {
+		return fmt.Errorf("run-spec: steps[%d].expect: requires texts and/or fingerprint", i)
+	}
+	for _, t := range e.Texts {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("run-spec: steps[%d].expect.texts: entries must be non-empty", i)
+		}
+	}
+	if e.JaccardMin < 0 || e.JaccardMin > 1 {
+		return fmt.Errorf("run-spec: steps[%d].expect.jaccard_min: must be in (0, 1] (0 = default)", i)
+	}
+	if e.JaccardMin != 0 && len(e.Texts) == 0 {
+		return fmt.Errorf("run-spec: steps[%d].expect.jaccard_min: requires texts", i)
+	}
+	if e.Fingerprint != "" {
+		if _, err := strconv.ParseUint(e.Fingerprint, 16, 64); err != nil {
+			return fmt.Errorf("run-spec: steps[%d].expect.fingerprint: must be a 64-bit hex DHash", i)
+		}
+	}
+	if d := e.MaxHashDistance; d != nil {
+		if *d < 0 || *d > 64 {
+			return fmt.Errorf("run-spec: steps[%d].expect.max_hash_distance: must be in [0, 64]", i)
+		}
+		if e.Fingerprint == "" {
+			return fmt.Errorf("run-spec: steps[%d].expect.max_hash_distance: requires fingerprint", i)
+		}
 	}
 	return nil
 }

@@ -435,3 +435,20 @@ func lastCall(r *recSeqRunner, sub string) []string {
 func hasArgs(call, want []string) bool {
 	return strings.Contains(" "+strings.Join(call, " ")+" ", " "+strings.Join(want, " ")+" ")
 }
+
+// Simulator composites are untouched by the mirror gesture-evidence
+// stamping: no input_mode/verified fields on their results.
+func TestSimCompositesCarryNoMirrorEvidence(t *testing.T) {
+	b, _ := compositeBackend(seqStep{stdout: treeJSON("Settings", "General")})
+	res, err := handleTapElement(context.Background(), b, "UDID",
+		fastWait(map[string]any{"label": "General"}))
+	if err != nil {
+		t.Fatalf("tap_element: %v", err)
+	}
+	if _, ok := res["input_mode"]; ok {
+		t.Fatalf("res = %+v, sim composites must not claim an input mode", res)
+	}
+	if _, ok := res["verified"]; ok {
+		t.Fatalf("res = %+v, sim composites must not claim verification", res)
+	}
+}

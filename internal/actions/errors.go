@@ -7,6 +7,12 @@ import "fmt"
 type Error struct {
 	Code    string
 	Message string
+	// escalation, when non-nil, is the resolver ladder's compact
+	// observation bundle (rung trail + last text boxes); escalationPNG
+	// is the best-effort screen capture that goes with it. Extracted
+	// via EscalationEvidence, journaled by the server.
+	escalation    map[string]any
+	escalationPNG []byte
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -21,6 +27,10 @@ func unavailable(format string, a ...any) *Error {
 
 func notImplemented(format string, a ...any) *Error {
 	return &Error{Code: "not_implemented", Message: fmt.Sprintf(format, a...)}
+}
+
+func forbidden(format string, a ...any) *Error {
+	return &Error{Code: "forbidden", Message: fmt.Sprintf(format, a...)}
 }
 
 func internal(format string, a ...any) *Error {

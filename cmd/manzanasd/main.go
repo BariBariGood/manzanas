@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -23,6 +24,8 @@ import (
 	"github.com/BariBariGood/manzanas/internal/actions/mockapp"
 	"github.com/BariBariGood/manzanas/internal/buildinfo"
 	devcfg "github.com/BariBariGood/manzanas/internal/devices"
+	"github.com/BariBariGood/manzanas/internal/doctor"
+	"github.com/BariBariGood/manzanas/internal/elementmap"
 	"github.com/BariBariGood/manzanas/internal/journal"
 	"github.com/BariBariGood/manzanas/internal/lease"
 	"github.com/BariBariGood/manzanas/internal/record"
@@ -30,6 +33,7 @@ import (
 	"github.com/BariBariGood/manzanas/internal/server"
 	"github.com/BariBariGood/manzanas/internal/state"
 	"github.com/BariBariGood/manzanas/internal/stream"
+	"github.com/BariBariGood/manzanas/internal/templates"
 	"github.com/BariBariGood/manzanas/internal/warm"
 	"github.com/BariBariGood/manzanas/proto"
 )
@@ -44,6 +48,24 @@ func envOr(key, def string) string {
 func envBool(key string) bool {
 	v, _ := strconv.ParseBool(os.Getenv(key))
 	return v
+}
+
+// envBoolDefault reads a boolean env var with a default for unset or
+// unparseable values, additionally honoring "on"/"off".
+func envBoolDefault(key string, def bool) bool {
+	raw := os.Getenv(key)
+	switch strings.ToLower(raw) {
+	case "":
+		return def
+	case "on":
+		return true
+	case "off":
+		return false
+	}
+	if v, err := strconv.ParseBool(raw); err == nil {
+		return v
+	}
+	return def
 }
 
 func envDuration(key string, def time.Duration) time.Duration {
@@ -81,6 +103,29 @@ func defaultJournalDir() string {
 		return ""
 	}
 	return filepath.Join(home, ".manzanasd", "journal")
+}
+
+// defaultTemplatesDir is ~/.manzanasd/templates — BESIDE the journal's
+// runs dir, never inside it, so the journal GC can't sweep the library
+// (empty when home is unknown, which disables the library).
+func defaultTemplatesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".manzanasd", "templates")
+}
+
+// defaultElementMapDir is ~/.manzanasd/elementmaps — beside the
+// templates dir and the journal's runs dir, never inside a run dir, so
+// the journal GC can't sweep learned elements (empty when home is
+// unknown, which disables the map).
+func defaultElementMapDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".manzanasd", "elementmaps")
 }
 
 func defaultStateDir() string {
@@ -156,6 +201,7 @@ func main() {
 		deviceWDALaunch  = flag.String("device-wda-launch", envOr("MANZANASD_DEVICE_WDA_LAUNCH", ""), "comma-separated <udid>=<spec> WDA auto-launch specs: devicectl:<runner-bundle-id> or xctestrun:<path>; requires a matching --device-wda entry (env MANZANASD_DEVICE_WDA_LAUNCH)")
 		deviceWDAForward = flag.String("device-wda-forward", envOr("MANZANASD_DEVICE_WDA_FORWARD", ""), "comma-separated <udid>=<local:remote> supervised usbmux port forwards (iproxy/pymobiledevice3), kept alive like the WDA runner; requires a matching --device-wda entry (env MANZANASD_DEVICE_WDA_FORWARD)")
 		deviceBackend    = flag.String("device-backend", envOr("MANZANASD_DEVICE_BACKEND", ""), "comma-separated <udid>=wda|mirror per-device action backends; default wda. mirror drives the phone through macOS iPhone Mirroring via the mirrord helper (env MANZANASD_DEVICE_BACKEND)")
+		mirrorAllowInput = flag.Bool("device-mirror-allow-input", envBool("MANZANASD_DEVICE_MIRROR_ALLOW_INPUT"), "allow input actions (tap/swipe/scroll/type/button and element composites) on mirror-backed devices; without it the mirror is read-only and input kinds return forbidden (env MANZANASD_DEVICE_MIRROR_ALLOW_INPUT)")
 		mirrorSocket     = flag.String("device-mirror-socket", envOr("MANZANASD_DEVICE_MIRROR_SOCKET", devcfg.DefaultMirrorSocket()), "unix socket of the mirrord GUI helper serving mirror-backed devices (env MANZANASD_DEVICE_MIRROR_SOCKET)")
 		devicesConfig    = flag.String("devices-config", envOr("MANZANASD_DEVICES_CONFIG", ""), "devices config file (JSON, see docs/devices.md); loaded at startup and re-read on SIGHUP, replacing the --devices/--device-wda* flags; default <state-dir>/devices.json when that file exists (env MANZANASD_DEVICES_CONFIG)")
 		installService   = flag.Bool("install-service", false, "install (or refresh) the per-user launchd LaunchAgent running this binary with the current flags, then exit; idempotent (macOS only)")
@@ -182,6 +228,10 @@ func main() {
 		journalDir      = flag.String("journal-dir", envOr("MANZANASD_JOURNAL_DIR", defaultJournalDir()), "run journal directory; empty disables the journal (env MANZANASD_JOURNAL_DIR)")
 		journalMaxAge   = flag.Duration("journal-max-age", envDuration("MANZANASD_JOURNAL_MAX_AGE", 7*24*time.Hour), "GC journal runs older than this; 0 disables (env MANZANASD_JOURNAL_MAX_AGE)")
 		journalMaxBytes = flag.Int64("journal-max-bytes", envInt64("MANZANASD_JOURNAL_MAX_BYTES", 2<<30), "GC oldest journal runs above this total size; 0 disables (env MANZANASD_JOURNAL_MAX_BYTES)")
+
+		templatesDir  = flag.String("templates-dir", envOr("MANZANASD_TEMPLATES_DIR", defaultTemplatesDir()), "template library directory for save_template; empty disables it (env MANZANASD_TEMPLATES_DIR)")
+		elementMap    = flag.Bool("element-map", envBoolDefault("MANZANASD_ELEMENT_MAP", true), "learn resolved elements into the element map and serve them through the resolver ladder's map fast-path rung (env MANZANASD_ELEMENT_MAP=off disables)")
+		elementMapDir = flag.String("element-map-dir", envOr("MANZANASD_ELEMENT_MAP_DIR", defaultElementMapDir()), "element map directory; empty disables the map (env MANZANASD_ELEMENT_MAP_DIR)")
 
 		recordMaxSeconds    = flag.Int("record-max-seconds", int(envInt64("MANZANASD_RECORD_MAX_SECONDS", record.DefaultMaxSeconds)), "hard duration cap per video recording (env MANZANASD_RECORD_MAX_SECONDS)")
 		recordMaxBytes      = flag.Int64("record-max-bytes", envInt64("MANZANASD_RECORD_MAX_BYTES", record.DefaultMaxBytes), "hard size cap per video recording (env MANZANASD_RECORD_MAX_BYTES)")
@@ -225,6 +275,8 @@ func main() {
 
 	var reg registry.Registry
 	var devToggle *registry.ToggleRegistry
+	var mirrorReg *registry.MirrorRegistry
+	var devicectlReg *registry.DevicectlRegistry
 	switch {
 	case *mock:
 		log.Info("using mock registry")
@@ -240,7 +292,14 @@ func main() {
 		// restart. Devices are excluded from the warm pool, state
 		// engine, and streaming by construction (pool membership is
 		// explicit UDIDs; state/stream backends are simctl-based).
-		devToggle = registry.NewToggle(registry.NewSimctl(), registry.NewDevicectl())
+		// Mirror-backed devices get their own registry source so a phone
+		// on an unpaired host (devicectl enumerates nothing) still shows
+		// up in /v0/targets; the merge overlays mirror liveness onto
+		// devicectl metadata when both know the UDID. It stays empty
+		// until the devices manager publishes a mirror config below.
+		mirrorReg = registry.NewMirror(nil)
+		devicectlReg = registry.NewDevicectl()
+		devToggle = registry.NewToggle(registry.NewSimctl(), devicectlReg, mirrorReg)
 		reg = devToggle
 	}
 
@@ -340,6 +399,32 @@ func main() {
 		srv.SetImages(imgs)
 	}
 
+	// The template library lives beside (never inside) the journal runs
+	// dir; a create failure disables save_template rather than the daemon.
+	var tplStore *templates.Store
+	if *templatesDir != "" {
+		st, err := templates.NewStore(*templatesDir)
+		if err != nil {
+			log.Error("template library disabled", "err", err)
+		} else {
+			log.Info("template library enabled", "dir", *templatesDir)
+			tplStore = st
+		}
+	}
+	srv.SetTemplates(tplStore)
+
+	var emapStore *elementmap.Store
+	if *elementMap && *elementMapDir != "" {
+		st, err := elementmap.NewStore(*elementMapDir)
+		if err != nil {
+			log.Error("element map disabled", "err", err)
+		} else {
+			log.Info("element map enabled", "dir", *elementMapDir)
+			emapStore = st
+		}
+	}
+	srv.SetElementMap(emapStore)
+
 	var backend actions.Backend
 	var warmBackend *actions.WarmBackend
 	// mockStore backs the mock action backend and the mock stream frames;
@@ -355,7 +440,10 @@ func main() {
 			st, err := reg.Health(ctx, udid)
 			return err == nil && st == proto.StateBooted
 		}
-		backend = mockapp.NewBackend(mockStore, mockapp.WithBooted(booted))
+		mb := mockapp.NewBackend(mockStore, mockapp.WithBooted(booted))
+		mb.SetTemplateStore(tplStore)
+		mb.SetElementMapStore(emapStore)
+		backend = mb
 		log.Info("actions backend ready", "backend", "mock")
 	} else {
 		var actOpts []actions.Option
@@ -363,6 +451,8 @@ func main() {
 			actOpts = append(actOpts, actions.WithAXePath(*axePath))
 		}
 		cold := actions.NewAXe(actOpts...)
+		cold.SetTemplateStore(tplStore)
+		cold.SetElementMapStore(emapStore)
 		if cold.AXeAvailable() {
 			log.Info("actions backend ready", "axe", cold.AXePath())
 		} else {
@@ -388,8 +478,13 @@ func main() {
 	// through SIGHUP (config file re-read) or POST /v0/devices — so
 	// attaching a phone never requires killing the daemon.
 	stopWDASupervisors := func() {}
+	// doctorDevices feeds the doctor the runtime device config; it stays
+	// nil on daemons without a device manager (mock builds).
+	var doctorDevices func() (proto.DevicesConfig, bool)
 	if devToggle != nil {
 		devBackend := actions.NewDevice()
+		devBackend.SetTemplateStore(tplStore)
+		devBackend.SetElementMapStore(emapStore)
 		router := actions.NewKindRouter(reg, backend, devBackend, devToggle.Enabled)
 		backend = router
 		devmgr := devcfg.NewManager(devBackend, func(on bool, deviceUDIDs []string) {
@@ -412,8 +507,21 @@ func main() {
 		stopWDASupervisors = devmgr.Close
 		defer stopWDASupervisors()
 		srv.SetDevicesManager(devmgr)
+		doctorDevices = func() (proto.DevicesConfig, bool) { return devmgr.Current(), true }
+		if mirrorReg != nil {
+			// Config applies publish the mirror UDID+socket set to the
+			// registry layer, and warn when devicectl does not enumerate
+			// a configured mirror UDID (a devicectl failure is
+			// indeterminate, not a missing device — no warning then).
+			devmgr.SetMirrorPublisher(mirrorReg.SetMirrors)
+			devmgr.SetMirrorKnownCheck(func(ctx context.Context, udid string) bool {
+				_, err := devicectlReg.Get(ctx, udid)
+				var nf *registry.NotFoundError
+				return !errors.As(err, &nf)
+			})
+		}
 
-		cfg, err := devcfg.FromFlags(*devices, *deviceWDA, *deviceWDALaunch, *deviceWDAForward, *deviceBackend, *mirrorSocket)
+		cfg, err := devcfg.FromFlags(*devices, *deviceWDA, *deviceWDALaunch, *deviceWDAForward, *deviceBackend, *mirrorSocket, *mirrorAllowInput)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -469,6 +577,27 @@ func main() {
 		}()
 	}
 	srv.SetActions(backend)
+
+	// The doctor (GET /v0/doctor, `manzanas doctor`) diagnoses this
+	// host's setup: toolchain, journal, gates, and per-device WDA/mirror
+	// probes. Sim/devicectl checks report "n/a" on mock and non-macOS
+	// daemons rather than fail.
+	denv := doctor.New(buildinfo.Version, proto.Version,
+		runtime.GOOS == "darwin" && !*mock, *journalDir,
+		exec.LookPath,
+		func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			return exec.CommandContext(ctx, name, args...).Output()
+		})
+	denv.Devices = doctorDevices
+	if pool != nil {
+		denv.Gates = func(ctx context.Context) (loadOK, diskOK, ok bool) {
+			ps := pool.Status(ctx)
+			return ps.LoadOK, ps.DiskOK, true
+		}
+	}
+	srv.SetDoctor(denv.Report)
 
 	// The journal is wired before the lease manager starts so its expiry
 	// goroutine (which reads srv.journal via EventSink) never races the write.
