@@ -1,6 +1,6 @@
 {
   "name": "manzanasd-client",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Thin npm wrapper for the manzanas CLI: downloads the right release binary on install and proxies to it.",
   "license": "Apache-2.0",
   "repository": {
@@ -30,5 +30,18 @@
   "cpu": [
     "x64",
     "arm64"
+  ],
+  "homepage": "https://manzanas.dapsdev.dev",
+  "keywords": [
+    "ios",
+    "simulator",
+    "xcode",
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "test-automation",
+    "macos"
   ]
 }
