@@ -9,7 +9,7 @@ import {
 } from "framer-motion";
 
 const INSTALL_CMD =
-  "brew tap baribarigood/tap https://github.com/BariBariGood/homebrew-tap && brew trust baribarigood/tap && brew install manzanasd";
+  "npx manzanasd-client@latest doctor";
 const FILM_URL =
   "https://github.com/user-attachments/assets/deb577d0-1123-4a89-90d8-8d9c7684a3cf";
 

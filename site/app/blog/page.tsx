@@ -8,6 +8,13 @@ const posts: {
   fieldNote?: boolean;
 }[] = [
   {
+    slug: "v0-7-0-agent-eyes-resolver-ladder",
+    date: "August 23, 2026",
+    title: "v0.7.0: teaching the agent to see",
+    teaser:
+      "Element references now resolve through a four-layer ladder — accessibility tree, element map, template/NCC match, OCR last — and run-specs can carry deterministic asserts (visibility, touch targets, contrast) that fail loudly with annotated evidence instead of passing silently.",
+  },
+  {
     slug: "v0-5-0-one-call-runs",
     date: "August 11, 2026",
     title: "v0.5.0: one call from clean simulator to evidence",

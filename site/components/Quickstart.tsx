@@ -4,10 +4,13 @@ import CopyBlock from "./CopyBlock";
 const steps = [
   {
     n: "01",
-    title: "Build and run the daemon",
-    body: "Install from the tap (or make build) and run it on a Mac — or anywhere with a mock fleet.",
+    title: "Install and run the daemon",
+    body: "One line with npm (or brew). Run it on a Mac — or anywhere with a mock fleet.",
     label: "install & run",
-    code: `brew tap baribarigood/tap \\
+    code: `npx manzanasd-client@latest doctor   # binary + setup diagnosis in one shot
+
+# or homebrew:
+brew tap baribarigood/tap \\
   https://github.com/BariBariGood/homebrew-tap
 brew trust baribarigood/tap
 brew install manzanasd
