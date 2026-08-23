@@ -6,9 +6,9 @@ class Manzanas < Formula
   desc "Client CLI for manzanasd, the multi-agent iOS simulator fleet daemon"
   homepage "https://github.com/BariBariGood/manzanas"
   url "https://github.com/BariBariGood/manzanas.git",
-      tag:      "v0.6.0",
-      revision: "1dbac2b611a75762266508a7d0469e796a8afb67"
-  license "MIT"
+      tag:      "v0.7.0",
+      revision: "ed32c98d7d076abb8429479fa4c9c50550a83501"
+  license "Apache-2.0"
   head "https://github.com/BariBariGood/manzanas.git", branch: "main"
 
   depends_on "go" => :build
