@@ -3,7 +3,7 @@
 manzanasd can record a leased simulator's screen to an `.mp4` that lands in
 the run journal as a content-addressed artifact. Recording is daemon-managed:
 the daemon owns the `simctl io <udid> recordVideo` child, finalizes it safely,
-validates the output, and ingests it — agents never touch simctl directly.
+validates the output, and ingests it, agents never touch simctl directly.
 
 ## Quick start
 
@@ -25,12 +25,12 @@ MCP agents get the same pair as `record_start` / `record_stop`, plus a
 
 ## HTTP API
 
-- `POST /v0/targets/{udid}/recording` — body `{lease_id, codec?, max_seconds?}`.
+- `POST /v0/targets/{udid}/recording`, body `{lease_id, codec?, max_seconds?}`.
   Requires an active lease on the target and target state `Booted`
   (`recordVideo` against a shut-down sim exits 0 with a 0-byte file, so
   non-Booted starts are refused with `409 target_busy`). One recording per
-  target; duplicates get `409`. Returns `201 {recording_id, codec, max_seconds, ...}`.
-- `POST /v0/targets/{udid}/recording/stop` — body `{lease_id}`. Returns the
+  target; duplicates get `409`. Returns `201 {recording_id, codec, max_seconds...}`.
+- `POST /v0/targets/{udid}/recording/stop`, body `{lease_id}`. Returns the
   artifact ref, journal ref, codec, duration, bytes, and stop reason.
 
 The finalized video is appended to the run journal as a `kind:"segment"` /
@@ -42,7 +42,7 @@ annotates recording artifacts with duration, size, and stop reason.
 
 The recorder child is stopped with SIGINT (the only clean finalize signal),
 reaped for up to 10 s, then SIGKILLed as a last resort. A SIGKILL leaves the
-simulator's recording service poisoned — further recordings on that target
+simulator's recording service poisoned, further recordings on that target
 are refused with `409` until it is shut down and booted again (the normal
 lease reset / pool recycle path does this).
 

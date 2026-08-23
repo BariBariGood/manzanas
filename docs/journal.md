@@ -1,10 +1,10 @@
-# Run journal — format v0
+# Run journal, format v0
 
 The run journal is manzanasd's exportable evidence layer: every protocol
 action performed under a lease is recorded as an append-only JSONL entry,
 with artifacts (screenshots, video segment refs) stored content-addressed
 alongside. Format v0 is designed so a run can be **replayed** against an
-equivalent target in v0.2 — each run carries determinism metadata (target
+equivalent target in v0.2, each run carries determinism metadata (target
 UDID, runtime, device type, app versions when known).
 
 ## Versioning rules
@@ -18,7 +18,7 @@ UDID, runtime, device type, app versions when known).
   `journal/v1`. Readers refuse formats they don't know: reading a run whose
   `meta.json` declares an unrecognized `format_version` fails
   (`501 not_implemented` over the API) instead of misinterpreting it as v0.
-- v0.2 replay requirement: entries record enough to re-drive a run — the
+- v0.2 replay requirement: entries record enough to re-drive a run, the
   ordered action list with params, plus meta pinning the target
   (UDID/runtime/device type) and app versions. A replayer matches an
   equivalent target by runtime + device type and re-dispatches each
@@ -103,13 +103,13 @@ the payload keys `run` / `name`). Payload keys:
 | `error` | on error | error message |
 | `ax_before` / `ax_after` | when the actions backend provides them | a11y tree hashes around the action (HID actions: opt-in via payload `ax_hashes: true`; an `observe`'s tree hash is recorded as `ax_after`) |
 | `artifacts` | when present | list of `{path, sha256, bytes}` refs into `artifacts/` |
-| `resolver` | element actions via the resolver ladder | resolution provenance: the rung that resolved the element (`"ax"`, `"ocr"`, ...) |
+| `resolver` | element actions via the resolver ladder | resolution provenance: the rung that resolved the element (`"ax"`, `"ocr"`...) |
 | `resolver_skipped` | when a rung was circuit-skipped | e.g. `"ax(circuit-open)"` (see [resolver-ladder.md](resolver-ladder.md)) |
 | `verified` / `fingerprint` | when the actions backend provides them | post-action verification outcome / screen fingerprint (lifted from results like `resolver`) |
 | `input_mode` / `verify` | mirror-backed input actions (including the element composites) | how the gesture was delivered (`background`/`focused`) and how it was checked (`pixel-delta`/`off`/`unavailable`) |
 | `escalation` | element-resolution timeout | compact observation bundle: per-rung outcome trail + last observed text boxes; a best-effort `escalation.png` screenshot is stored as a run artifact |
 
-These fields are additive within journal/v0 — readers that don't know
+These fields are additive within journal/v0, readers that don't know
 them can ignore them.
 
 Artifacts are content-addressed (`<sha256><ext>`) and referenced by
@@ -150,14 +150,14 @@ journal refs already handed to clients are never reissued.
 
 See `proto/PROTOCOL.md` §7:
 
-- `GET /v0/journal` — list runs.
-- `GET /v0/journal/{run}?from_seq=&limit=` — paginated entries + meta.
-- `GET /v0/journal/{run}/artifacts/{path}` — fetch an artifact.
-- `POST /v0/journal/{run}/artifacts?name=&kind=` — ingest an artifact
+- `GET /v0/journal`, list runs.
+- `GET /v0/journal/{run}?from_seq=&limit=`, paginated entries + meta.
+- `GET /v0/journal/{run}/artifacts/{path}`, fetch an artifact.
+- `POST /v0/journal/{run}/artifacts?name=&kind=`, ingest an artifact
   (`manzanas journal upload RUN_ID FILE...`).
-- `GET /v0/journal/{run}/export.md` — PR-comment-ready markdown evidence
+- `GET /v0/journal/{run}/export.md`, PR-comment-ready markdown evidence
   (run metadata, action table, artifact list).
-- WS `journal.tail` — replay from `from_seq`, then live entries as
+- WS `journal.tail`, replay from `from_seq`, then live entries as
   `journal.entry` events (for `manzanas journal tail`).
 
 ## Exporting PR evidence
@@ -188,7 +188,7 @@ YAML run-spec `manzanas run` consumes (docs/runs.md): each seq-ordered
 `action`-kind entry whose action is a PROTOCOL.md §5 action kind becomes a
 `steps:` entry (`action` = the kind, `with` = the recorded params,
 verbatim), and the run's determinism meta becomes the `target:`
-requirement — runtime + device type when the meta recorded them (portable
+requirement, runtime + device type when the meta recorded them (portable
 across hosts), else a UDID pin. The emitted document is re-parsed through
 the strict run-spec parser before it is written, so it always round-trips.
 
@@ -201,25 +201,25 @@ manzanas run replay.yaml                           # replay it
 
 Filtering defaults, and the flags that change them:
 
-- **Pure-read kinds are dropped** — `observe`, `ui_tree`, `screenshot`,
+- **Pure-read kinds are dropped**, `observe`, `ui_tree`, `screenshot`,
   `audit`, `pasteboard_get`, `wait_for_element`, `wait_tree_stable`,
   `wait_for_stable` observe
   state without mutating it, so a replay doesn't need to re-issue them.
   `--keep-observations` keeps them (e.g. as verification anchors).
-- **The spec stops just before the first failed step** — replaying a step
+- **The spec stops just before the first failed step**, replaying a step
   that already failed once usually re-fails. `--include-failed` keeps the
   failed step and everything after it.
-- **Lifecycle entries are never emitted as steps** — `lease`/`run` kind
+- **Lifecycle entries are never emitted as steps**, `lease`/`run` kind
   entries and dotted protocol methods journaled as actions (e.g.
   `targets.boot`) are re-performed by the runs engine itself.
-- **State ops are dropped with a warning** — `state`-kind entries
+- **State ops are dropped with a warning**, `state`-kind entries
   (fixtures, snapshot/restore/erase) cannot be reconstructed: the journal
   records their names but not their payloads, and `target.fixtures` /
   `target.reset` are not derivable from the entry stream. When a run
   recorded any, the emitted YAML starts with a `# WARNING:` header listing
-  them — re-seed equivalent state in the spec before replaying.
+  them, re-seed equivalent state in the spec before replaying.
 
-- **Expect blocks are opt-in** — `--with-expectations` attaches an
+- **Expect blocks are opt-in**, `--with-expectations` attaches an
   `expect` block (masked text set + DHash fingerprint, docs/runs.md) to
   each exported step from the run's recorded `runs.step_expectation`
   observations. Requires the run to have been recorded with
@@ -232,7 +232,7 @@ screen templates is a planned follow-up.
 Sample output:
 
 ```markdown
-## manzanasd run journal — `lse_ab12cd34`
+## manzanasd run journal, `lse_ab12cd34`
 
 | | |
 |---|---|
@@ -267,7 +267,7 @@ Cite evidence as "run `<run_id>`, artifact `<path>`" (see
 
 ### CI: attach evidence to a PR
 
-The composite action (`action/`) has this built in — set
+The composite action (`action/`) has this built in, set
 `journal-evidence: "true"` and the exported markdown is added to the job
 step summary, plus posted as a PR comment when `comment-pr: "true"`.
 Without the action, the recipe is: lease → run → export → comment:
@@ -300,15 +300,15 @@ gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@evidence.m
 **Security posture, stated plainly:** the daemon trusts its network (see
 below), so any CI runner that can reach it holds full lease/action power
 over the fleet. Self-hosted runners must **never** execute untrusted fork
-PR code — use them only on private repos (or with fork PR workflows
+PR code, use them only on private repos (or with fork PR workflows
 disabled), and keep daemons tailnet-only or localhost so a compromised
 cloud runner can't reach them. Never feed untrusted data (PR titles,
 `github.event.*` on `pull_request_target`) into the action's inputs.
 
 ## Authorization (v0 limitation)
 
-The v0 protocol carries no caller identity — the lease ID is the only
-credential — so journal reads are unauthenticated and artifact writes are
+The v0 protocol carries no caller identity, the lease ID is the only
+credential, so journal reads are unauthenticated and artifact writes are
 gated only on the run's lease still being active. Deployments rely on
 network-level trust (tailnet/localhost). Agent-scoped read/write
 authorization is deferred to a protocol-wide authentication/identity

@@ -8,12 +8,12 @@ simulator hot. Agents issue actions in tight loops, so that overhead
 dominates end-to-end latency.
 
 The warm backend removes it by keeping a **resident helper process per
-simulator** — `simbridge` — that bootstraps once and then services
+simulator**, `simbridge`, that bootstraps once and then services
 actions over stdin/stdout JSON lines in a few milliseconds each.
 
 (A third backend serves mock targets: `manzanasd --mock` routes the same
 handlers to an in-process synthetic app so the full action loop runs
-off-Mac — see [mock.md](mock.md).)
+off-Mac, see [mock.md](mock.md).)
 
 ```
 POST /v0/actions ─► WarmBackend ──(warm kind + helper alive)──► Pool ─► simbridge --udid X   (resident)
@@ -54,13 +54,13 @@ stale snapshot (a frontmost modal/sheet missing from the tree while the
 background screen still shows); a fresh process opens a fresh connection,
 which cannot. It costs the full cold spawn per read, so use it as an
 escape hatch when the tree looks stale, not as a default. The flag is
-additive and understood by the Go side only — older simbridge builds need
+additive and understood by the Go side only, older simbridge builds need
 no changes. It is best-effort: on a host with no AXe CLI (helper-only),
 or when no warm helper is configured (the cold path is always fresh),
 the flag is a no-op rather than an error.
 
-Everything else — `type` (AXe's text→HID keymap is nontrivial and typing
-is rare), `screenshot`, and the `simctl`-backed app lifecycle ops — stays
+Everything else, `type` (AXe's text→HID keymap is nontrivial and typing
+is rare), `screenshot`, and the `simctl`-backed app lifecycle ops, stays
 on the cold path. The cold backend is untouched; the warm backend wraps
 it.
 
@@ -78,16 +78,16 @@ it.
   on a freshly spawned one; if that also fails, the action transparently
   falls back to the cold AXe path and the slot is freed.
 - **Op timeout**: each helper call is bounded (30s default); a helper
-  that blows it is treated as wedged — closed, evicted, and the action
-  falls back cold — so one stuck process cannot stall its simulator.
+  that blows it is treated as wedged, closed, evicted, and the action
+  falls back cold, so one stuck process cannot stall its simulator.
   Worst-case user-visible latency is the op timeout plus the ~3s
   close-then-kill grace (~33s with defaults) before the fallback runs.
-- **Spawn cooldown**: after a helper fails to start for a UDID — or dies
-  twice in a row mid-call — warm attempts for that UDID are skipped for
+- **Spawn cooldown**: after a helper fails to start for a UDID, or dies
+  twice in a row mid-call, warm attempts for that UDID are skipped for
   30s so actions go straight to the cold path instead of re-paying the
   failed bootstrap every call.
 - **At-most-once inputs**: a transport failure after the request was
-  written to the helper is marked *delivered* — the tap/key may already
+  written to the helper is marked *delivered*, the tap/key may already
   have landed. Non-idempotent ops are then neither replayed on a fresh
   helper nor re-run cold; the caller gets `unavailable`. Only
   never-written failures (and idempotent reads like observe) retry.
@@ -146,7 +146,7 @@ falls back to the shipped `.swiftinterface`, which fails to parse (the
 `FBSimulatorControl` class shadows its own module name, so qualified
 references like `FBSimulatorControl.FBSimulatorContentSizeCategory`
 resolve against the class). This is a **toolchain-version problem, not an
-architecture problem** — the same Swift source builds and runs fine on
+architecture problem**, the same Swift source builds and runs fine on
 x86_64. Concretely: AXe v1.8.0 frameworks were compiled with Swift 6.3.2,
 so they compile as-is on a 6.3.2 host (the M3) but fail on the Intel
 boxes' Xcode 26.6 / Swift 6.3.3. At **runtime** the prebuilt frameworks

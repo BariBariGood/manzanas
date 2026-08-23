@@ -29,7 +29,7 @@ Put every Mac and every client machine on the same tailnet:
 3. Verify from the client: `curl -s http://<mac-tailnet-ip>:7433/v0/healthz`.
 
 The daemon binds all interfaces by default; rely on the tailnet ACLs for
-access control (v0 has no auth by default — do not expose the port to
+access control (v0 has no auth by default, do not expose the port to
 the public internet). As defense in depth, `--auth-token` (env
 `MANZANASD_AUTH_TOKEN`) on the daemon and broker requires a shared
 bearer token on everything except `GET /v0/healthz`:
@@ -49,11 +49,11 @@ file's host entries. Keep one shared token across broker and daemons
 whenever the bundled clients are in play: the broker dashboard's live
 view presents the browser's token directly to each daemon, and the CLI
 / MCP clients follow a lease's `host_addr` to the owning daemon with
-the same `--token` they used for the broker — a split token gets every
+the same `--token` they used for the broker, a split token gets every
 lease-scoped call (boot, actions, streams, journal, release) rejected
 with 401 by the daemon. Split broker/daemon tokens only work for raw
 API clients that talk to the broker alone. A config file carrying
-per-host tokens holds credentials in plaintext — keep it `chmod 600`.
+per-host tokens holds credentials in plaintext, keep it `chmod 600`.
 
 The broker's per-host `build` column in
 `/v0/fleet/hosts` (and its dashboard) makes daemon version skew visible

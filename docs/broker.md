@@ -1,11 +1,11 @@
 # manzanas-broker: multi-Mac federation
 
 *Who this is for: operators running two or more Mac hosts. One Mac
-needs no broker — point clients straight at the daemon.*
+needs no broker, point clients straight at the daemon.*
 
 `manzanas-broker` fronts N `manzanasd` daemons (one per Mac) behind a single
 endpoint so agents can lease "any matching simulator in the fleet" without
-knowing which Mac owns it. It is cross-platform — typically it runs on a
+knowing which Mac owns it. It is cross-platform, typically it runs on a
 Linux box on the same tailnet as the Mac fleet.
 
 ## The broker is a scheduler, not a data-plane proxy
@@ -13,8 +13,8 @@ Linux box on the same tailnet as the Mac fleet.
 The broker only handles *placement*: target enumeration and lease
 scheduling. Every lease it returns is annotated with `host` (the owning
 host's name) and `host_addr` (the daemon's base URL); after acquiring a
-lease through the broker, everything target-bound — boot/shutdown,
-actions, streams, state, recording, the run journal — goes to `host_addr`
+lease through the broker, everything target-bound, boot/shutdown,
+actions, streams, state, recording, the run journal, goes to `host_addr`
 **directly**. The `manzanas` CLI and the MCP facade do this
 **automatically**: their shared client caches `lease_id → host_addr` from
 every lease it sees and routes lease-scoped calls to the owning daemon, so
@@ -61,16 +61,15 @@ manzanas-broker --config fleet.json
 ]}
 ```
 
-Host sources are merged (config file, then env — env is ignored when
-`--host` flags are given — then flags); names and addresses must be unique.
+Host sources are merged (config file, then env, env is ignored when
+`--host` flags are given, then flags); names and addresses must be unique.
 
 ## Firewalled hosts: tunneled addresses
 
 A daemon behind a firewall that blocks inbound `:7433` (e.g. the macOS
 application firewall before its allow rule is in place) can be fronted
 through an SSH tunnel: forward a local port on the broker host to the
-daemon's loopback, then configure the host with a `localhost` address —
-tunneled hosts are ordinary hosts, so direct and tunneled entries mix
+daemon's loopback, then configure the host with a `localhost` address, tunneled hosts are ordinary hosts, so direct and tunneled entries mix
 freely:
 
 ```sh
@@ -81,7 +80,7 @@ manzanas-broker --addr :7440 \
   --host trashcan=http://localhost:7435,intel   # tunneled
 ```
 
-Everything works unchanged — health probes, target refresh, and lease
+Everything works unchanged, health probes, target refresh, and lease
 proxying all go through the tunnel. The one caveat: `host_addr` on granted
 leases is the configured address, so clients resolve `localhost:<port>`
 relative to *themselves*. Tunneled hosts therefore work out of the box when
@@ -89,8 +88,7 @@ clients run on the broker host; clients elsewhere need the same tunnel (or
 direct reachability) locally.
 
 Prefer fixing the firewall (direct is the primary path); for tunnel
-supervision — auto-reconnect, idempotent startup, reboot persistence —
-wrap the ssh command in a LaunchAgent, and allow the daemon binary with
+supervision, auto-reconnect, idempotent startup, reboot persistence, wrap the ssh command in a LaunchAgent, and allow the daemon binary with
 `/usr/libexec/ApplicationFirewall/socketfilterfw`.
 
 ## Health checking
@@ -100,12 +98,12 @@ per-probe timeout `--probe-timeout`, default 3s): `GET /v0/healthz`, a
 target-list refresh, plus a `GET /v0/status` fetch of the daemon's own
 load/occupancy snapshot (capacity, running/parked counts, lease counts,
 load/disk gates). Daemons that don't serve `/v0/status` (older builds)
-stay fully supported — they simply report no stats and keep the
+stay fully supported, they simply report no stats and keep the
 pre-status scheduling behavior. If healthz succeeds but the
 target-list refresh fails, the host stays up on its cached target list
 and the failure is surfaced in `last_error`. A host that fails its probe
 is marked **down**: its targets vanish from the federated list and it receives no new leases until
-a probe succeeds again. Existing leases on a down host are untouched — the
+a probe succeeds again. Existing leases on a down host are untouched, the
 daemon owns them, and clients holding `host_addr` may keep working if the
 outage is only broker→daemon.
 
@@ -130,7 +128,7 @@ outage is only broker→daemon.
 ## Wire surface
 
 Where the broker's surface overlaps the daemon's, it speaks the same v0
-protocol — a thin client pointed at the broker for targets/leases just
+protocol, a thin client pointed at the broker for targets/leases just
 works:
 
 | Route | Behavior |
@@ -153,7 +151,7 @@ envelope (`404 not_found` / `405 bad_request`), matching every other
 error shape.
 
 Anything else (boot, actions, streams, state, recording, journal) is
-*not* served by the broker — it answers `404 not_found` with message
+*not* served by the broker, it answers `404 not_found` with message
 `unknown route`. The bundled clients recognize that answer, resolve the
 lease's `host_addr` (via `GET /v0/leases/{id}` on the broker), and retry
 against the owning daemon transparently; a fresh process (each CLI
@@ -165,7 +163,7 @@ Raw-HTTP clients should use the lease's `host_addr` directly.
 ## Fleet dashboard
 
 The broker serves a built-in aggregated dashboard at
-`http://<broker-addr>/dash/` — one page showing every up simulator across
+`http://<broker-addr>/dash/`, one page showing every up simulator across
 the whole fleet. Like the daemon's dashboard it ships embedded in the
 `manzanas-broker` binary (no extra install, no new flags):
 
@@ -176,41 +174,40 @@ manzanas-broker --addr :7440 \
 # open http://<broker>:7440/dash/
 ```
 
-- **Fleet tab** — per-host health (up/down with the probe's `last_error`,
+- **Fleet tab**, per-host health (up/down with the probe's `last_error`,
   labels, target and lease counts, last probe time) plus the federated
   targets and leases tables, each row carrying its owning host. A "live
   view" button per booted target opens the owning daemon's `/view/{udid}`
   page. A down host is shown as down while every other host keeps working.
-- **Multiview tab** — one tile per booted, un-parked simulator target
+- **Multiview tab**, one tile per booted, un-parked simulator target
   across ALL hosts. Same resource model as the daemon dash: streams are
   strictly opt-in per tile (click to start/stop, start all / stop all),
   never always-on.
 
 The broker dash is **read-only** (no boot/shutdown/release controls) and
 polls the broker's own endpoints (`/v0/fleet/hosts`, `/v0/targets`,
-`/v0/leases`) every 5 seconds — the broker has no WS surface, and those
+`/v0/leases`) every 5 seconds, the broker has no WS surface, and those
 listings are backed by cheap JSON GETs against each daemon.
 
 The scheduler-not-data-plane rule holds: clicking a tile negotiates the
 stream by POSTing `{host_addr}/v0/streams` **directly against the owning
-daemon** and attaches the offer's MJPEG URL on that daemon — media never
+daemon** and attaches the offer's MJPEG URL on that daemon, media never
 flows through the broker. (That cross-origin negotiation is why the
 daemon's `POST /v0/streams` carries permissive CORS headers; see
 [PROTOCOL.md §6](../proto/PROTOCOL.md).) Trust model is unchanged: no
-auth, tailnet-only — see [dashboard.md](dashboard.md).
+auth, tailnet-only, see [dashboard.md](dashboard.md).
 
 ## Federated runs
 
 `POST /v0/runs` ([docs/runs.md](runs.md)) works against the broker like
 against a daemon: the broker derives placement labels from the spec's
 `target` (labels plus the slugs from `runtime`/`device_type`; host-level
-labels pin the run to one Mac — alongside at least one target selector,
-since the daemon still needs one to pick a target on that Mac — and a
+labels pin the run to one Mac, alongside at least one target selector,
+since the daemon still needs one to pick a target on that Mac, and a
 pinned `udid` restricts candidates
 to hosts owning it), ranks candidate hosts exactly like a lease acquire
-(warm-first — a run *is* a lease acquire plus choreography), and proxies
-the run to the winner. The run executes entirely on the owning daemon —
-the broker only routes. Sync requests are served by submitting the run
+(warm-first, a run *is* a lease acquire plus choreography), and proxies
+the run to the winner. The run executes entirely on the owning daemon, the broker only routes. Sync requests are served by submitting the run
 async to the daemon and polling it until the run finishes, so a
 multi-minute run never holds a long broker→daemon HTTP call; `async`
 requests answer `202` immediately and `GET /v0/runs/{id}` polls through
@@ -231,21 +228,20 @@ target-derived labels).
 Scheduling:
 
 1. Candidate hosts = healthy hosts whose (cached) target list has at least
-   one target carrying all requested labels. None → `409 no_match` — unless
+   one target carrying all requested labels. None → `409 no_match`, unless
    no host is up at all, or the labels select a configured host that is
    currently down; both are `503 unavailable` (a retryable outage, not a
    label mismatch).
 2. Candidates are ranked **warm-first**, in three tiers:
-   - **Tier 1 — warm/booted match:** a target carrying all requested
-     labels is parked-warm in the daemon's pool or already Booted —
-     granting there needs a ~26ms thaw, not a multi-minute cold boot.
-   - **Tier 2 — cold-boot headroom:** the daemon reports positive
+   - **Tier 1, warm/booted match:** a target carrying all requested
+     labels is parked-warm in the daemon's pool or already Booted, granting there needs a ~26ms thaw, not a multi-minute cold boot.
+   - **Tier 2, cold-boot headroom:** the daemon reports positive
      running headroom (`max_booted_running − running − boots_in_flight`)
      and passing load/disk gates. Hosts that report no stats (older
      daemons) also sit here.
-   - **Tier 3 — saturated:** no headroom and no warm match (a new
+   - **Tier 3, saturated:** no headroom and no warm match (a new
      acquire is guaranteed to queue), or failing gates (a cold boot
-     would be refused). Ranked last but never skipped — the daemon
+     would be refused). Ranked last but never skipped, the daemon
      stays the final authority.
 
    Within a tier, hosts are ordered by ascending **effective load**: the
@@ -261,8 +257,8 @@ Scheduling:
    `host`/`host_addr` set.
 4. If every candidate queues the request, the broker keeps the queued
    lease on the candidate with the **shallowest daemon-reported queue**
-   (`leases_queued`; hosts without stats rank last) — releasing the
-   other speculative queued leases — and returns `202` — queueing itself
+   (`leases_queued`; hosts without stats rank last), releasing the
+   other speculative queued leases, and returns `202`, queueing itself
    is owned by that daemon's FIFO queue. Poll `GET /v0/leases/{id}` **through the broker**
    until active. When the acquire carries a reset spec (`erase`/
    `snapshot:<name>`), a speculative queued lease's state is re-checked
@@ -277,9 +273,9 @@ so terminal reads and repeated (idempotent) releases behave the same
 through the broker as against the daemon. Each probe round also reconciles the table against the
 daemons, forgetting leases that ended behind the broker's back (TTL
 expiry, direct release against `host_addr`, daemon GC) so load counters
-and `/v0/fleet/hosts` stay accurate. Broker restarts lose that table — daemons still expire the
+and `/v0/fleet/hosts` stay accurate. Broker restarts lose that table, daemons still expire the
 leases by TTL, and clients that saved `host_addr` can renew/release
-against the daemon directly — the bundled CLI/MCP clients do exactly
+against the daemon directly, the bundled CLI/MCP clients do exactly
 that automatically: lease control ops (get/renew/release) go through the
 broker while it answers, and fall back to the cached `host_addr` when the
 broker is unreachable or has forgotten the lease.
@@ -296,7 +292,7 @@ Every federated acquire records a **placement decision**: the requested
 labels, the outcome (`active`, `queued`, or an error code), the winning
 host and its tier, a one-way lease-ID digest (the ID's holder can compute
 the same digest to correlate; nothing of the token leaks), and the full
-ranked candidate list the decision walked — per
+ranked candidate list the decision walked, per
 host: tier, effective load, warm match/idle-warm depth, and (when the
 daemon reports status) parked count and running headroom. The broker
 retains the most recent 256 decisions in memory.
@@ -328,11 +324,11 @@ manzanas --daemon broker-box:7440 fleet hints        # current rebalancing advic
 The broker watches its placement decisions over a sliding demand window
 (default 10 minutes) and derives per-host **hints**:
 
-- **grow** — a label class fell to cold tiers (headroom/saturated) at
+- **grow**, a label class fell to cold tiers (headroom/saturated) at
   least 3 times in the window: every up host whose targets match the
   class is advised to keep it warm, with the windowed cold-placement and
   warm-hit counts attached.
-- **shrink** — a host reports parked warm capacity that served zero warm
+- **shrink**, a host reports parked warm capacity that served zero warm
   placements across the whole window while the fleet saw real demand
   (≥3 placements): the pool may be warming the wrong things. A quiet
   fleet never draws shrink advice, nor does a host that hasn't been up
@@ -350,19 +346,19 @@ Hints are exposed two ways:
 `{"source":"broker","window_seconds":600,"classes":[{"labels":["ios26"],"action":"grow","cold_placements":5}]}`
 and answers `{"accepted":true,"acted":false}`.
 
-**Advice is never binding.** The daemon only *records* it — surfaced on
-`GET /v0/status` as `pool_advice` for operators — and always retains
+**Advice is never binding.** The daemon only *records* it, surfaced on
+`GET /v0/status` as `pool_advice` for operators, and always retains
 final say over its warm pool through its own capacity class and
 load/disk gates; nothing is booted, parked, or evicted on a scheduler's
 word. Old daemons without the endpoint answer 404, which the broker
-remembers (per host, until the host bounces) and skips — fully backward
+remembers (per host, until the host bounces) and skips, fully backward
 compatible. Placement-time steering (warm-first tiers + idle-warm-depth
 ordering above) works regardless, so rebalancing degrades gracefully to
 demand steering on mixed-version fleets.
 
 ## Limits (v0.1)
 
-- No auth (same as the daemon) — tailnet-only, never expose publicly.
+- No auth (same as the daemon), tailnet-only, never expose publicly.
 - No WS surface on the broker; use REST for placement, then the owning
   daemon's WS.
 - Static host list; add/remove hosts by restarting the broker.

@@ -1,8 +1,8 @@
 # MCP server
 
 `manzanas mcp` serves the manzanasd toolset over the Model Context
-Protocol (stdio transport), so any MCP-capable agent — Claude Code,
-Cursor, Codex, and friends — can lease and drive iOS simulators without
+Protocol (stdio transport), so any MCP-capable agent, Claude Code,
+Cursor, Codex, and friends, can lease and drive iOS simulators without
 knowing the wire protocol.
 
 The server is a thin facade: every tool call proxies to the configured
@@ -21,7 +21,7 @@ binary, cross-platform):
 go build -o manzanas ./cmd/manzanas     # or brew install / release tarball
 ```
 
-Point the client at the daemon with either mechanism — both are
+Point the client at the daemon with either mechanism, both are
 expressible in every MCP client config:
 
 - `MANZANASD_ADDR` environment variable (e.g. `mac-host:7433`), or
@@ -29,7 +29,7 @@ expressible in every MCP client config:
 
 If neither is set, it defaults to `127.0.0.1:7433`. To lease across a
 multi-Mac fleet, point at a `manzanas-broker` endpoint instead
-([broker.md](broker.md)) — the server follows the `host_addr` annotation
+([broker.md](broker.md)), the server follows the `host_addr` annotation
 on broker-granted leases automatically, so every tool (actions, boot,
 screenshots, state, journal) works against the owning daemon with no
 extra configuration.
@@ -116,7 +116,7 @@ Fleet and lifecycle:
 | `run_status` | Poll a run started with `run` (async or still executing) by its run ID. |
 | `journal_export` | Export a run's journal as PR-ready evidence (`run_id` = `lease_id`): markdown summary with failures highlighted and artifact refs, or the raw JSON export with `format: "json"`. Works after the lease is released. |
 
-Semantic element tools (preferred — the daemon matches accessibility
+Semantic element tools (preferred, the daemon matches accessibility
 elements and acts on them, so the agent never computes coordinates):
 
 | tool | what it does |
@@ -127,13 +127,13 @@ elements and acts on them, so the agent never computes coordinates):
 | `scroll_to_element` | Scroll (bounded swipes) until the matched element is visible on screen; distinguishes "never in the tree" from "matched but stuck off screen". |
 | `wait_for_element` | Wait until a matching element appears (or disappears with `absent`). |
 | `wait_tree_stable` | Wait until the screen stops changing (animations/loads settled). |
-| `wait_for_stable` | Wait until the screen's pixels stop changing (screenshot diffs stay under a threshold for a quiet window) — works on every backend, and needs no OCR per poll on mirror devices. |
+| `wait_for_stable` | Wait until the screen's pixels stop changing (screenshot diffs stay under a threshold for a quiet window), works on every backend, and needs no OCR per poll on mirror devices. |
 | `audit` | Deterministic UI-quality checks over the current tree → findings (evidence, not verdicts) + annotated screenshot, both journaled. See [The audit tool](#the-audit-tool-deterministic-ui-checks). |
 
 Matchers, shared by all element tools: `label` (visible text, substring),
 `id` (accessibility identifier / testID, exact), `role` (Button, Cell,
-TextField, ..., exact), `value` (current value, substring), `placeholder`
-(placeholder text — the best way to find empty text fields), `exact`
+TextField..., exact), `value` (current value, substring), `placeholder`
+(placeholder text, the best way to find empty text fields), `exact`
 (require exact text matches). At least one is required. When several
 elements match, the daemon ranks exact text over substring hits,
 interactable elements over static text and containers, and smaller frames
@@ -143,7 +143,7 @@ to contain the text.
 ## The audit tool (deterministic UI checks)
 
 `audit` inspects one accessibility-tree observation with deterministic
-geometry checks and returns **findings** — measured evidence, never
+geometry checks and returns **findings**, measured evidence, never
 pass/fail verdicts. Run it instead of eyeballing screenshots or
 hand-measuring `ui_tree` frames; you (the agent) decide which findings
 matter for the app under test.
@@ -154,12 +154,12 @@ Checks (select a subset with `checks`, default all):
 |---|---|
 | `touch_target` | interactive elements smaller than `min_touch_pt` (default 44x44pt) in either dimension |
 | `clipping` | frames extending beyond the screen bounds or beyond a non-scrolling parent's bounds, with per-edge overflow in points |
-| `alignment` | sibling edges almost-but-not-quite aligned: deltas within `alignment_tolerance_pt` (default 4pt) — larger deltas are treated as intentional layout |
+| `alignment` | sibling edges almost-but-not-quite aligned: deltas within `alignment_tolerance_pt` (default 4pt), larger deltas are treated as intentional layout |
 | `spacing` | gaps in sibling rows/columns deviating from the group's median by more than `spacing_tolerance_pt` (default 4pt), with the full gap list |
 | `safe_area` | interactive elements intruding into the safe-area insets (`safe_area_insets` override, or a device-class heuristic) |
-| `missing_labels` | interactive elements with no label, value, or placeholder — nothing a screen reader or an element matcher can use |
+| `missing_labels` | interactive elements with no label, value, or placeholder, nothing a screen reader or an element matcher can use |
 
-Each finding carries the check name, a `ref` (`F1`, `F2`, ...), the
+Each finding carries the check name, a `ref` (`F1`, `F2`...), the
 element's role/label/id/frame, the measured values, and an evidence
 sentence. The same refs are drawn as labeled red boxes on an annotated
 screenshot. Both the findings JSON and the annotated PNG are journaled as
@@ -170,17 +170,17 @@ Noise control: dense grids of repeated same-size controls (keyboards,
 emoji pickers, calendar day cells) are detected and suppressed
 (`suppressed_elements` reports how many); findings are capped per check
 with an `elided` count when a screen is pathological. System chrome the
-OS draws — scroll-indicator pseudo-elements (UIKit-labeled "Vertical/Horizontal
+OS draws, scroll-indicator pseudo-elements (UIKit-labeled "Vertical/Horizontal
 scroll bar…" Slider/ScrollBar nodes, plus thin unlabeled elongated
-ones), the status bar, and the keyboard — is also suppressed by default
+ones), the status bar, and the keyboard, is also suppressed by default
 (`include_system_chrome: true` restores it, though individual keyboard
 keys remain under the dense-group rule), and `touch_target` withholds
 small controls whose frame is fully covered by an enclosing ≥min-size
 tappable Cell or Button row (stock Settings' ~28pt row buttons and
-chevrons — the row itself is the touch target; count reported as
+chevrons, the row itself is the touch target; count reported as
 `suppressed_covered_controls`, restore with
 `include_covered_controls: true`). The heuristics are role/id/frame
-based and deterministic — see `internal/actions/chrome.go`.
+based and deterministic, see `internal/actions/chrome.go`.
 
 Scoping: pass any element matcher (flat fields or `predicate`) to audit
 only the matched element's subtree, or `region` (`{x, y, w, h}` in
@@ -210,7 +210,7 @@ digests the full unfiltered tree:
 {"lease_id": "lse_...", "roles": ["Button"], "scope": {"type": "Table"}}
 ```
 
-`format: "compact"` returns `tree_compact` — one depth-indented line per
+`format: "compact"` returns `tree_compact`, one depth-indented line per
 element (`[12] Button "Save" (20,100 100x44) interactive`) with a stable
 depth-first `[i]` index over the returned tree, the same order in which
 the predicate `index` field picks candidates. When filters or `scope`
@@ -231,7 +231,7 @@ simulator-only. CLI: `--capture-logs [--log-process NAME]`.
 
 ## The predicate DSL (strict matching)
 
-Every element tool also accepts a `predicate` object — a strict,
+Every element tool also accepts a `predicate` object, a strict,
 composable alternative to the flat matcher fields above (use one form
 per call, never both). Where the flat matcher silently picks the
 best-ranked hit, a predicate must resolve to **exactly one** element:
@@ -249,12 +249,12 @@ selector):
 | `text` | the element's visible text (label or value), **exact** |
 | `text_contains` | visible text, substring |
 | `text_regex` | visible text, RE2 regular expression |
-| `type` | the element type/role, exact (`Button`, `Cell`, `TextField`, ...) |
+| `type` | the element type/role, exact (`Button`, `Cell`, `TextField`...) |
 | `accessibility_id` | the accessibility identifier / testID, exact |
 | `bounds_hint` | where the element's centre sits on screen: `top_half`, `bottom_half`, `left_half`, `right_half`, or `center` (the middle half in both axes) |
-| `near` | `{predicate, direction, max_distance?}` — the element lies `left`/`right`/`above`/`below` of another **uniquely**-resolved element, overlapping its row/column, optionally within `max_distance` points centre-to-centre |
-| `parent_of` | a predicate on a descendant; resolves the enclosing element — the direct parent by default, or the matching ancestor when combined with other fields (e.g. `type: "Cell"`) |
-| `index` | 0-based pick among the remaining matches, in tree order — the explicit disambiguator |
+| `near` | `{predicate, direction, max_distance?}`, the element lies `left`/`right`/`above`/`below` of another **uniquely**-resolved element, overlapping its row/column, optionally within `max_distance` points centre-to-centre |
+| `parent_of` | a predicate on a descendant; resolves the enclosing element, the direct parent by default, or the matching ancestor when combined with other fields (e.g. `type: "Cell"`) |
+| `index` | 0-based pick among the remaining matches, in tree order, the explicit disambiguator |
 
 `text`/`text_contains`/`text_regex` are mutually exclusive. `near` and
 `parent_of` nest full predicates (up to 4 levels); an ambiguous inner
@@ -286,7 +286,7 @@ Raw tools (fallbacks when there is no usable accessibility element):
 | `observe` | Same tree + hash as `ui_tree` (kept for backward compatibility). |
 | `tap` / `swipe` | HID input at raw coordinates. |
 | `type_text` | Type into whatever currently has focus. |
-| `button` | Press a hardware button (home, lock, ...). |
+| `button` | Press a hardware button (home, lock...). |
 | `screenshot` | Capture the screen (returns PNG). |
 | `record_start` / `record_stop` | Screen recording. |
 
@@ -297,7 +297,7 @@ Raw tools (fallbacks when there is no usable accessibility element):
 action) and a derived `ui_changed` field, so an agent can tell "the tap
 did something" without a follow-up screenshot. The daemon hashes the tree
 best-effort and time-bounded, so under load a hash can be missing; when
-either hash is unavailable `ui_changed` is `null` (unknown — fall back to
+either hash is unavailable `ui_changed` is `null` (unknown, fall back to
 `ui_tree` if you need to confirm the effect). A `scroll_to_element` that
 never swiped (element already visible) omits the signal entirely.
 `scroll_to_element` also
@@ -318,8 +318,8 @@ scroll_to_element if the element is further down the page)
 
 An element that matched but sits outside the viewport suggests
 `scroll_to_element`; `scroll_to_element` itself distinguishes an element
-that was never in the tree (`timeout` — likely the wrong screen) from one
-that matched but could not be brought into view (`off_viewport` — pinned
+that was never in the tree (`timeout`, likely the wrong screen) from one
+that matched but could not be brought into view (`off_viewport`, pinned
 off-screen or in a non-scrollable container).
 
 ## Example transcript
@@ -361,22 +361,22 @@ agent → lease_release {"lease_id":"lse_9f2"}
 ```
 
 When a matcher times out but elements matching it exist outside the
-viewport, the error appends an off-screen hint — e.g. `2 matching
+viewport, the error appends an off-screen hint, e.g. `2 matching
 element(s) exist off-screen: Button label="Save" ... (below the
-viewport) — scroll to bring them into view (scroll_to_element)` — and
+viewport), scroll to bring them into view (scroll_to_element)`, and
 ambiguous DSL matches mark off-screen candidates with `(off-screen)`.
 Candidates that are on screen but excluded by the matcher's own
 `in_frame`/`bounds_hint` are reported separately (`... on screen but
-outside the requested in_frame/bounds_hint region ... — relax or adjust
+outside the requested in_frame/bounds_hint region ..., relax or adjust
 the region`), so scroll advice only appears when scrolling can help.
 
-Note the recovery pattern: a matcher miss is not a dead end — `ui_tree`
+Note the recovery pattern: a matcher miss is not a dead end, `ui_tree`
 shows what is actually on screen, and the `id` matcher is the most
 reliable when the app sets accessibility identifiers.
 
 ## Troubleshooting
 
-**"daemon health check failed" at startup** — the daemon is down or the
+**"daemon health check failed" at startup**, the daemon is down or the
 address is wrong. Check what the server is pointed at (the error prints
 the current address), verify the daemon from the same machine:
 
@@ -388,7 +388,7 @@ and fix `MANZANASD_ADDR` / `--daemon` in your client config. Remember the
 address is resolved on the machine running the MCP server (your agent's
 machine), not the Mac.
 
-**Server starts but the client shows no tools** — MCP stdio servers must
+**Server starts but the client shows no tools**, MCP stdio servers must
 keep stdout pure JSON-RPC. `manzanas mcp` logs only to stderr; if you
 wrapped it in a shell script, make sure the wrapper doesn't print to
 stdout. Verify the handshake by hand:
@@ -405,19 +405,18 @@ or interactively with the MCP inspector:
 npx @modelcontextprotocol/inspector -e MANZANASD_ADDR=mac-host:7433 /path/to/manzanas mcp
 ```
 
-**Tool calls fail with "no active lease" / "lease expired"** — every
+**Tool calls fail with "no active lease" / "lease expired"**, every
 driving tool needs a `lease_id` from `lease_acquire`. Leases have a TTL
 (default 300 s); long sessions should call `lease_renew` before expiry.
-The daemon allows a short renewal grace window after nominal expiry —
-actions and a late renew may still succeed for a couple of minutes — but
+The daemon allows a short renewal grace window after nominal expiry, actions and a late renew may still succeed for a couple of minutes, but
 don't rely on it. Tool errors include a what-to-do-next hint for exactly
 this reason.
 
-**Calls hang in `lease_acquire`** — all matching targets are busy and the
+**Calls hang in `lease_acquire`**, all matching targets are busy and the
 lease is queued (the default `wait: true` blocks until grant). Pass
 `wait: false` to return immediately, or check queue depth with
 `manzanas lease ls`.
 
-**Daemon returns 503 "overloaded"** — the host hit a safety gate (too
+**Daemon returns 503 "overloaded"**, the host hit a safety gate (too
 many booted sims, memory pressure). Back off and retry; see
 [troubleshooting.md](troubleshooting.md).

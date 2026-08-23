@@ -12,7 +12,7 @@ friends do in this space:
 
 1. **`xcrun simctl io <udid> recordVideo` piped** (what serve-sim uses for
    its H.264 path). It emits an H.264/HEVC **MP4 container**, not an
-   elementary stream, and only finalizes the moov atom on SIGINT — so live
+   elementary stream, and only finalizes the moov atom on SIGINT, so live
    consumption requires either forcing fMP4 fragments (undocumented,
    Xcode-version-dependent) or re-muxing through ffmpeg. It also can't
    change fps, restart cheaply per viewer-driven lifecycle, or survive sim

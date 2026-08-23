@@ -86,7 +86,7 @@ the release tag, `make build` stamps `git describe`, and a plain
 
 ### Optional shared-token auth
 
-By default the daemon has no auth — access control is the network
+By default the daemon has no auth, access control is the network
 boundary (tailnet/loopback). As defense in depth you can require a
 shared bearer token:
 
@@ -103,7 +103,7 @@ dashboard prompts for it and keeps it in localStorage.
 
 The `manzanasd-client` package is **not yet published to npm**, and its
 postinstall downloads the `manzanas` binary from the GitHub Release
-matching the package version — so it needs a release tag matching the
+matching the package version, so it needs a release tag matching the
 package version. Until it is published, verify it locally:
 
 ```sh

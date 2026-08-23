@@ -1,8 +1,8 @@
-# State engine — snapshots, fixtures, per-lease auto-reset
+# State engine, snapshots, fixtures, per-lease auto-reset
 
 `internal/state` implements `state.Engine`: deterministic environment
 control for simulators. Everything is exposed over the protocol
-(`/v0/state/...`, WS `state.*` — see [proto/PROTOCOL.md](../proto/PROTOCOL.md) §7)
+(`/v0/state/...`, WS `state.*`, see [proto/PROTOCOL.md](../proto/PROTOCOL.md) §7)
 and every mutating op is guarded by an active lease: the server derives the
 target UDID from the lease, so an agent can never touch a sim it doesn't
 hold.
@@ -23,7 +23,7 @@ data, settings, keychain, TCC grants).
   the reboot flow, see below), then replace
   `~/Library/Developer/CoreSimulator/Devices/<udid>/data` with a `cp -c -R`
   (clonefile) copy of the clone's data directory, preserving the target's
-  UDID and device.plist identity — leases, labels, and client references
+  UDID and device.plist identity, leases, labels, and client references
   stay valid.
 
 ### Tradeoff: clone vs. raw data-directory copy
@@ -34,7 +34,7 @@ Two candidate mechanisms were considered:
 |---|---|---|
 | capture speed / space | APFS clonefile, near-instant, block-shared | same when `cp -c` works, full copy otherwise |
 | integrity | CoreSimulator validates & registers the clone; survives runtime/Xcode version bookkeeping | bypasses CoreSimulator; safe only while the device is shutdown |
-| restore-in-place | not supported — clone always creates a *new* UDID | swaps state under the *same* UDID |
+| restore-in-place | not supported, clone always creates a *new* UDID | swaps state under the *same* UDID |
 | visibility | clone appears in `simctl list` (must be filtered) | invisible |
 
 Neither alone is sufficient: clone can't restore in place (a new UDID would
@@ -93,14 +93,14 @@ verbatim when it isn't.
 `POST /v0/leases` accepts `"reset": "none" | "erase" | "snapshot:<name>"`.
 When such a lease ends (release **or** TTL expiry), the lease manager holds
 the target (it cannot be acquired or promoted to a queued lease), runs the
-reset through the state engine — shutdown if needed, then `simctl erase` or
-the snapshot data-dir swap, leaving the sim shutdown — and only then frees
+reset through the state engine, shutdown if needed, then `simctl erase` or
+the snapshot data-dir swap, leaving the sim shutdown, and only then frees
 the target for the next holder. The next agent always gets a clean,
 shutdown sim. A `snapshot:<name>` reset whose snapshot can't be resolved
 when the reset runs (typo, or the snapshot/backing clone was deleted
-mid-lease) degrades to an `erase` — the next holder still gets a clean
+mid-lease) degrades to an `erase`, the next holder still gets a clean
 target. If the reset fails for any other reason (simctl error, copy
-failure), the target stays quarantined — held by the reset sentinel, never
-handed out dirty — until an operator resolves the underlying problem and
+failure), the target stays quarantined, held by the reset sentinel, never
+handed out dirty, until an operator resolves the underlying problem and
 frees it with `POST /v0/targets/{udid}/clear-quarantine`; the failure is
 logged by the daemon.

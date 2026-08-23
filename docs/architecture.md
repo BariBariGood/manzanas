@@ -6,7 +6,7 @@ dispatch, media streaming, state fixtures, and the run journal. Clients are
 thin and cross-platform.
 
 It is deliberately **one orchestration core** with transports as thin
-backends behind the actions interface — simulators (AXe/simctl),
+backends behind the actions interface, simulators (AXe/simctl),
 physical devices (WebDriverAgent), and iPhone Mirroring (mirrord) all
 serve the same leases, actions, runs, and journal. Where that boundary
 sits, what would ever be split out, and what the project refuses to
@@ -140,7 +140,7 @@ One file per concern: `hid.go` (tap/swipe/type/button/key), `observe.go`
 A future FBSimulatorControl-native or physical-device backend implements the
 same `Backend` interface; nothing outside `internal/actions` knows about AXe.
 
-### stream.Streamer (`internal/stream`) — implemented
+### stream.Streamer (`internal/stream`), implemented
 
 ```go
 type Streamer interface {
@@ -185,7 +185,7 @@ type Journal interface {
 ```
 
 Wire-in point: `/v0/journal/...` (implemented; 501 only when the daemon
-runs with `--journal-dir ""` — see [journal.md](journal.md));
+runs with `--journal-dir ""`, see [journal.md](journal.md));
 `ActionResult.journal_ref` carries `proto.JournalRef` values produced by
 `Append`.
 
@@ -198,9 +198,9 @@ boot passes the host safety gates, thaws parked members on lease grant
 
 ## Design bets
 
-1. **Daemon owns everything stateful; clients are dumb** — the resurrected
+1. **Daemon owns everything stateful; clients are dumb**, the resurrected
    idb-companion model, agent-first.
-2. **MCP is a facade, not the core** — the core is the versioned protocol in
+2. **MCP is a facade, not the core**, the core is the versioned protocol in
    `proto/`; CLI, SDKs, and MCP all sit on that one surface.
-3. **Reuse over rewrite** — AXe-style HID techniques for sim input, go-ios
+3. **Reuse over rewrite**, AXe-style HID techniques for sim input, go-ios
    for device plumbing (v0.2), streaming lessons from serve-sim/iphone-use.

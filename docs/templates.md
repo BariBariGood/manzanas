@@ -2,13 +2,12 @@
 
 The template library stores named PNG crops of on-screen elements
 ("templates") for pixel matching: the `save_template` action plus the
-list/delete surface (the storage half), and the matching half —
-`tap_template`, `assert_template` named lookups, and the resolver
+list/delete surface (the storage half), and the matching half, `tap_template`, `assert_template` named lookups, and the resolver
 ladder's `template` rung.
 
 ## Where templates live
 
-On disk at `~/.manzanasd/templates` by default — **beside** the journal
+On disk at `~/.manzanasd/templates` by default, **beside** the journal
 directory (`~/.manzanasd/journal`), never inside it, so the journal's GC
 never sweeps the library. `--templates-dir` (env
 `MANZANASD_TEMPLATES_DIR`) moves it; an empty value disables the library
@@ -29,7 +28,7 @@ survive scale changes, so a template only applies to captures from the
 same backend at the same capture width. The sidecar carries
 `device_class`, `window_px` (full capture size), `crop_rect`,
 `source_run`, `min_score_seen` (the lowest NCC score a successful match
-of this template has seen — drift bookkeeping updated by the matching
+of this template has seen, drift bookkeeping updated by the matching
 actions), and `created_at`.
 
 ## Saving a template
@@ -71,7 +70,7 @@ template, matches by normalized cross-correlation
 (`internal/imgutil.MatchNCC`), and taps the centre of the match once
 the score reaches `threshold` (default 0.8). It accepts either an
 inline `template_base64` or the `name`/`bundle_id?` of a stored
-template (looked up under the capture's device class — save the
+template (looked up under the capture's device class, save the
 template from the same backend you tap on), an optional `rect` search
 region, and the usual `timeout_ms`/`interval_ms`. On failure the
 `timeout` error reports the best score seen. It is a mutating kind: on
@@ -93,7 +92,7 @@ curl -s localhost:7433/v0/actions -d '{
 On daemons with a template library, `tap_element` /
 `type_into_element` fall back to saved templates when the a11y (or
 OCR) rung misses: a template named like the flat matcher's `id` or
-`label` (as-is or slugged — `"Sign In"` → `"sign-in"`) under the
+`label` (as-is or slugged, `"Sign In"` → `"sign-in"`) under the
 launched bundle (then `_global`) for the capture's device class is
 NCC-matched against a fresh capture, and a hit is tapped with journal
 provenance `resolver:"template"`. See docs/resolver-ladder.md.

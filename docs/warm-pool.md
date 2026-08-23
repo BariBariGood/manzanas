@@ -1,12 +1,11 @@
-# Warm pool — park/thaw + host safety gates
+# Warm pool, park/thaw + host safety gates
 
 `internal/warm` keeps a pool of pre-slimmed simulators **parked**
 (process tree SIGSTOPped) so a lease grant gets a ready sim in
 milliseconds instead of a cold boot, while the same package's gates keep
 the host from being melted by too many sims.
 
-Why parking: a booted sim, even slimmed, still burns CPU idling —
-measured **~213% host CPU across idle sims before parking vs ~1–6%
+Why parking: a booted sim, even slimmed, still burns CPU idling, measured **~213% host CPU across idle sims before parking vs ~1–6%
 after** (a SIGSTOPped tree costs ~0 CPU and keeps its RAM). Thawing is a
 cached-PID `SIGCONT`: **~26 ms on Apple Silicon (~225 ms Intel) vs a
 5 s+ slim-sim boot** (15–30 s on cold Intel).
@@ -19,16 +18,16 @@ cached-PID `SIGCONT`: **~26 ms on Apple Silicon (~225 ms Intel) vs a
 
 ## Pool membership
 
-- `--pool-sims` / `MANZANASD_POOL_SIMS` — comma-separated UDIDs the daemon
+- `--pool-sims` / `MANZANASD_POOL_SIMS`, comma-separated UDIDs the daemon
   parks at startup. Adds retry with capped backoff (a daemon restarting
   during a build races the load spike); unknown UDIDs are dropped.
-- `--pool-slim-profile` / `MANZANASD_POOL_SLIM_PROFILE` — simslim profile
+- `--pool-slim-profile` / `MANZANASD_POOL_SLIM_PROFILE`, simslim profile
   applied before each park (empty = don't slim; `default` = simslim's
   built-in profile). Sims stamped from a slim golden image keep their
   recorded disables re-applied after every erase regardless of this flag
   (see [images.md](images.md)). simslim v0.6.0 batches its launchctl
   transitions, so the slim step of the release→re-park cycle is up to
-  7.8× faster on Intel (3.4× on Apple silicon) — the cycle is dominated
+  7.8× faster on Intel (3.4× on Apple silicon), the cycle is dominated
   by erase+boot, but the win matters most on the Intel boxes. Pools that
   must exercise in-app purchases need a profile whose `except` array
   includes `store` (v0.6.0 keeps the AMS payment-sheet daemons enabled
@@ -72,8 +71,8 @@ minutes, so every pool member's `phys_footprint` is polled (default every
 
 ## Host safety gates
 
-The pool wraps the registry (`warm.Guard`), so **every** boot — pool or
-not — passes three gates on real (darwin, non-mock) daemons. A refusal is
+The pool wraps the registry (`warm.Guard`), so **every** boot, pool or
+not, passes three gates on real (darwin, non-mock) daemons. A refusal is
 `503 {"code":"overloaded"}`: back off and retry.
 
 | Gate | Default | Flag |
@@ -84,7 +83,7 @@ not — passes three gates on real (darwin, non-mock) daemons. A refusal is
 
 For all three: `0` = default, negative = disable. The capacity class also
 caps parked members (6 Intel / 4 AS) and serializes concurrent boots
-(1 Intel / 2 AS) — Intel boot storms drove 1-min load past 500.
+(1 Intel / 2 AS), Intel boot storms drove 1-min load past 500.
 
 These mirror fleet-wide sim-cap conventions; the daemon enforces per-host
 what the lock protocol asks agents to respect manually.
@@ -103,5 +102,5 @@ what the lock protocol asks agents to respect manually.
 
 See also: [troubleshooting.md](troubleshooting.md) (503 overloaded,
 parked-sim semantics), [actions-warm.md](actions-warm.md) (the *other*
-"warm" — resident action helpers), [images.md](images.md) (slim golden
+"warm", resident action helpers), [images.md](images.md) (slim golden
 images the pool sims are usually stamped from).

@@ -8,7 +8,7 @@ don't need this page.*
 ## The boundary: one orchestration core, transports as backends
 
 The YAML run-spec's value is that the **same spec** runs against any
-target — a simulator, a WDA-backed phone, a mirrored phone — with
+target, a simulator, a WDA-backed phone, a mirrored phone, with
 leases, the journal, and the evidence pipeline shared. Splitting a
 transport into its own repo would duplicate the whole orchestration
 layer for the sake of one backend, so it stays one repo:
@@ -24,8 +24,8 @@ layer for the sake of one backend, so it stays one repo:
   does not depend on its internals; if the mirror path ever needed a
   separate life, the socket protocol is the boundary.
 - **The only genuinely separable audience is the broker** (multi-Mac
-  federation — a different operator persona than "one Mac, one
-  daemon"). If the repo is ever split, the broker goes first — and not
+  federation, a different operator persona than "one Mac, one
+  daemon"). If the repo is ever split, the broker goes first, and not
   before traction justifies double maintenance.
 
 "Should X be its own repo?" defaults to **no** unless X has its own
@@ -42,7 +42,7 @@ These are permanent, not "not yet":
   desktop apps or screens outside the leased-iOS-target model.
 - **App-specific botting.** No TikTok/Instagram flows, no engagement
   automation, no per-app playbooks. Hostile apps are a transport *test
-  case* — they exercise the no-accessibility-tree path — not a market.
+  case*, they exercise the no-accessibility-tree path, not a market.
 - **Bot-detection evasion.** Input-timing spoofing, fingerprint
   evasion, and anything else designed to make synthetic input look
   human are permanently out of scope.
@@ -67,7 +67,7 @@ The mirror backend is honest about the ceiling iPhone Mirroring imposes
   cannot be proven delivered fails rather than reporting ok.
 - One phone mirrors to one Mac at a time, and one Mac mirrors one
   phone; the phone must be on the same Apple ID with 2FA.
-- The phone must stay **locked** — picking it up pauses the session
+- The phone must stay **locked**, picking it up pauses the session
   ("iPhone in Use"), and resuming is a physical/GUI action the daemon
   never performs itself.
 - The host Mac needs a logged-in GUI session, and the smoothest setup

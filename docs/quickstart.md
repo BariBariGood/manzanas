@@ -1,15 +1,15 @@
 # Quickstart: one Mac, one simulator
 
-A full first session on a single Mac — install the daemon, lease a
+A full first session on a single Mac, install the daemon, lease a
 simulator, run an action, grab a screenshot, and finish with the
 one-call YAML run. No fleet, no VPN, no extra machines required:
 everything below talks to `localhost`, and the daemon needs **zero
 flags**.
 
 Prerequisites: macOS with Xcode (and at least one iOS simulator runtime)
-installed — verify with `xcrun simctl list devices`. (No Mac? The whole
+installed, verify with `xcrun simctl list devices`. (No Mac? The whole
 walkthrough below also works against `manzanasd --mock` on any Linux
-box — see [mock.md](mock.md).)
+box, see [mock.md](mock.md).)
 
 ## 1. Install and start the daemon
 
@@ -20,7 +20,7 @@ brew install manzanasd            # daemon (+ pulls in the manzanas CLI)
 brew services start manzanasd     # launchd service on port 7433
 ```
 
-Check the whole setup in one shot — the doctor diagnoses the daemon,
+Check the whole setup in one shot, the doctor diagnoses the daemon,
 the simulator toolchain, iOS runtimes, the journal, and the boot gates,
 and every failing check prints a one-line fix:
 
@@ -40,7 +40,7 @@ flags at all: the run journal, template library, and element map land
 under `~/.manzanasd/`, the warm pool and safety gates use
 capacity-class defaults, and the opt-in surfaces (physical devices,
 the mirror backend, auth, broker) stay off until you ask. It has no
-auth in v0, so keep it on localhost or a private network — see
+auth in v0, so keep it on localhost or a private network, see
 [SECURITY.md](../SECURITY.md).
 
 ## 2. See your simulators
@@ -54,14 +54,14 @@ type and runtime (e.g. `iphone-17-pro`, `ios26`).
 
 ## 3. Lease one
 
-Leases are TTL-bounded exclusive claims — while you hold one, nothing
+Leases are TTL-bounded exclusive claims, while you hold one, nothing
 else drives that simulator:
 
 ```sh
 manzanas lease acquire --labels ios26 --agent me --ttl 600 --wait
 ```
 
-(`--ttl` takes bare seconds — `600`, not `10m`; default 300, max 3600.)
+(`--ttl` takes bare seconds, `600`, not `10m`; default 300, max 3600.)
 
 Note the lease ID (`lse_...`) and target UDID in the output. Boot it if
 it isn't already booted:
@@ -70,7 +70,7 @@ it isn't already booted:
 manzanas boot <udid> --lease lse_...
 ```
 
-Boot is asynchronous — the command returns immediately while the
+Boot is asynchronous, the command returns immediately while the
 simulator comes up. Poll `manzanas targets` until the state reads
 `Booted` (usually a few seconds; ~26 ms when the daemon thaws a
 warm-pool sim):
@@ -91,12 +91,12 @@ Note the CLI convention: positional arguments come first, flags after
 lse_...`).
 
 Right after a boot the accessibility bridge can take a few extra seconds
-to come up — a first action may fail with an AXe “No translation object”
+to come up, a first action may fail with an AXe “No translation object”
 error. Just retry, or use the `wait_tree_stable` action to block until
 the UI settles (see [agent-qa.md](agent-qa.md)).
 
 Composite actions can target elements by accessibility label instead of
-coordinates — see [agent-qa.md](agent-qa.md) for a worked end-to-end QA
+coordinates, see [agent-qa.md](agent-qa.md) for a worked end-to-end QA
 session.
 
 ## 5. Take a screenshot
@@ -123,8 +123,8 @@ acquire gives you a clean simulator every time.
 
 ## 7. The one-call run
 
-Everything you just did by hand — lease, boot, actions, evidence,
-release — is one declarative call ([runs.md](runs.md)):
+Everything you just did by hand, lease, boot, actions, evidence,
+release, is one declarative call ([runs.md](runs.md)):
 
 ```yaml
 # smoke.yaml
@@ -140,12 +140,12 @@ steps:
 manzanas run smoke.yaml -o evidence.md
 ```
 
-`evidence.md` is the journal's PR-ready markdown export — paste it into
+`evidence.md` is the journal's PR-ready markdown export, paste it into
 a PR comment. This is the shape agents should use for repeatable flows.
 
 ## Next steps
 
-- Everything above is also plain HTTP + JSON on `localhost:7433` — see
+- Everything above is also plain HTTP + JSON on `localhost:7433`, see
   [proto/PROTOCOL.md](../proto/PROTOCOL.md) and the README quickstart
   for the `curl` equivalents.
 - `manzanas mcp` exposes the same lease-scoped operations as MCP tools
@@ -153,7 +153,7 @@ a PR comment. This is the shape agents should use for repeatable flows.
 - Multiple Macs behind one endpoint: [broker.md](broker.md) and
   [fleet.md](fleet.md).
 - No Mac handy? `manzanasd --mock` runs anywhere (Linux/CI) with a fake
-  fleet and a full mock action backend — the whole
+  fleet and a full mock action backend, the whole
   lease→observe→tap→audit loop against a synthetic app screen
   ([mock.md](mock.md)).
 - Something broken? `manzanas doctor`, then

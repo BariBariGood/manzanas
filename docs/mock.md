@@ -1,6 +1,6 @@
 # Mock mode (`--mock`)
 
-`manzanasd --mock` runs the daemon anywhere — Linux dev boxes, CI — with
+`manzanasd --mock` runs the daemon anywhere, Linux dev boxes, CI, with
 no Mac, no Xcode, and no simulators. It is not just a fake target list:
 mock targets carry a **full mock action backend**, so the entire agent
 loop (lease → observe → tap_element → type → wait_for_element → audit →
@@ -19,14 +19,13 @@ On a non-macOS host the daemon falls back to mock mode automatically
 |---|---|
 | Registry | 3 fake simulators (`MOCK-…`); boot/shutdown flip state instantly |
 | Actions | the real action handlers over a synthetic UI tree (below) |
-| Screenshots | rendered from the synthetic tree — pixels match describe-ui |
+| Screenshots | rendered from the synthetic tree, pixels match describe-ui |
 | Streaming | MJPEG/WS frames render the same synthetic UI (`/view`, `/dash`) |
 | Video | `MockStarter` produces placeholder recordings |
 | State/warm pool | disabled (macOS-only) |
 
-The action backend reuses the production `AXeBackend` handlers —
-observe compaction, predicate/matcher DSL, wait loops, composite
-element actions, batches, audit checks, screenshot transcoding — with
+The action backend reuses the production `AXeBackend` handlers, observe compaction, predicate/matcher DSL, wait loops, composite
+element actions, batches, audit checks, screenshot transcoding, with
 the AXe/simctl process boundary replaced by an in-process synthetic
 app (`internal/actions/mockapp`). What CI exercises through `--mock`
 is therefore the same code an agent hits on a real Mac, minus the
@@ -46,7 +45,7 @@ points; the content is taller than the viewport so scrolling is real):
 | Sign In | `Button` / `sign-in` | shows `status`: "Welcome, <username>!" when both fields are filled, else "Missing credentials" |
 | status | `StaticText` / `status` | hidden until Sign In is tapped |
 | Reset | `Button` / `reset` | restores the initial state |
-| "Mock Footer" | `StaticText` / `footer` | starts below the fold — scroll_to_element / swipe to reach it |
+| "Mock Footer" | `StaticText` / `footer` | starts below the fold, scroll_to_element / swipe to reach it |
 | Keyboard | `Keyboard` / `keyboard` | present while a field has focus (satisfies `require_focus`) |
 
 State transitions are synchronous and deterministic: a tap's effect is
@@ -72,7 +71,7 @@ Supported action kinds: everything in PROTOCOL.md §5. Notes:
 
 ## Example: the full loop against --mock
 
-The nicest shape is the one-call YAML run ([runs.md](runs.md)) — this is
+The nicest shape is the one-call YAML run ([runs.md](runs.md)), this is
 the README's five-minute quickstart:
 
 ```sh
@@ -100,7 +99,7 @@ curl -s -X DELETE $D/v0/leases/$LID
 ```
 
 With the journal enabled the audit findings, annotated screenshot, and
-screenshots land as run artifacts exactly as on a real host — so e2e
+screenshots land as run artifacts exactly as on a real host, so e2e
 tests of journal evidence also run on Linux.
 
 ## Limitations
