@@ -32,8 +32,18 @@ protocol over HTTP + WebSocket.
 
 ## Five-minute quickstart
 
-No flags to read, no config to write. Three layers — start at whichever
+No flags to read, no config to write. Four layers — start at whichever
 matches your machine:
+
+### 0. One-liner (macOS/Linux): npx
+
+```sh
+npx manzanasd-client@latest doctor   # downloads the release binary and runs the setup diagnosis
+```
+
+The npm wrapper fetches the right `manzanasd`/`manzanas` binary for your
+platform on install, then proxies every command to it. Use it as the CLI,
+or point your agent's MCP config at `manzanas mcp`.
 
 ### 1. Anywhere (no Mac): mock mode
 
