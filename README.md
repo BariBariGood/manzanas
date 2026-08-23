@@ -3,7 +3,6 @@
 [![Release](https://img.shields.io/github/v/release/BariBariGood/manzanas)](https://github.com/BariBariGood/manzanas/releases)
 [![npm](https://img.shields.io/npm/v/manzanasd-client)](https://www.npmjs.com/package/manzanasd-client)
 [![CI](https://github.com/BariBariGood/manzanas/actions/workflows/ci.yml/badge.svg)](https://github.com/BariBariGood/manzanas/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/BariBariGood/manzanas)](LICENSE)
 [![AllMCPs Verified](https://allmcps.com/api/badge/manzanas)](https://allmcps.com/mcp/manzanas?verify=cc5ceeeb-24c5-4ac5-9327-f57ad5eb1165)
 
 A Mac daemon for multi-agent iOS simulator fleet orchestration: leases,
