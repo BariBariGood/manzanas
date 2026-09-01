@@ -13,13 +13,11 @@ AI agents (and humans) sharing simulators.
 Everything else, fleets, physical phones, mirroring, is an opt-in
 chapter you can ignore until you need it.
 
+https://github.com/user-attachments/assets/983b0548-df1a-41a3-812c-f0f39cfaa01c
 
+*1 orchestrator, 7 Codex agents, 7 simulators across 3 Macs, leases mean
+nobody trips over anybody. Real time, no edits.*
 
-https://github.com/user-attachments/assets/deb577d0-1123-4a89-90d8-8d9c7684a3cf
-
-
-*The launch film, leases, actions, live streaming, warm pools, the broker,
-and the run journal in 52 seconds. Sound on.*
 
 `manzanasd` runs on each Mac host and owns everything stateful, the
 simulator registry, the lease table, the warm pool, action backends,
@@ -153,10 +151,7 @@ and pay huge fixed costs. manzanasd removes both, with measured numbers
 |---|---|
 | the browser `/view` MJPEG live page | the built-in `/dash` fleet dashboard |
 
-https://github.com/user-attachments/assets/983b0548-df1a-41a3-812c-f0f39cfaa01c
 
-*1 orchestrator, 7 Codex agents, 7 simulators across 3 Macs, leases mean
-nobody trips over anybody. Real time, no edits.*
 
 ## MCP (Claude Code, Cursor, Codex)
 
