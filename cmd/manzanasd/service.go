@@ -78,6 +78,21 @@ func installLaunchdService(args []string) error {
 	}
 
 	domain := "gui/" + strconv.Itoa(os.Getuid())
+	// Refuse to stack a second agent: another manzanasd label already
+	// loaded (e.g. sh.brew.manzanasd from `brew services`) means the port
+	// never binds and this job crash-loops on KeepAlive.
+	if out, err := exec.Command("launchctl", "list").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 3 {
+				continue
+			}
+			other := fields[2]
+			if strings.Contains(other, "manzanasd") && other != serviceLabel && !strings.HasPrefix(other, serviceLabel+".") {
+				return fmt.Errorf("another manzanasd agent %q is already loaded; run 'launchctl bootout %s/%s' first", other, domain, other)
+			}
+		}
+	}
 	// bootout is best-effort: the job may not be loaded yet, and launchctl
 	// has no idempotent "load or reload".
 	_ = exec.Command("launchctl", "bootout", domain+"/"+serviceLabel).Run()

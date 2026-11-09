@@ -52,6 +52,20 @@ PLIST_DST="$AGENT_DIR/$LABEL.plist"
 LOG_DIR="$HOME/.manzanasd/logs"
 GUI_TARGET="gui/$(id -u)"
 
+# Refuse to stack a second agent: another manzanasd label already loaded
+# (e.g. sh.brew.manzanasd from `brew services`) means the port never binds
+# and this job crash-loops on KeepAlive. Only labels under our own
+# namespace ($LABEL, $LABEL.* like .logrotate/.mirrord) may coexist.
+while read -r _pid _status other; do
+  case "$other" in
+    "$LABEL"|"$LABEL".*|"") ;;
+    *manzanasd*)
+      echo "install.sh: another manzanasd agent '$other' is already loaded." >&2
+      echo "install.sh: run 'launchctl bootout $GUI_TARGET/$other' (or 'brew services stop manzanasd') first." >&2
+      exit 1 ;;
+  esac
+done < <(launchctl list 2>/dev/null)
+
 echo "==> installing binary to ~/bin/manzanasd"
 mkdir -p "$HOME/bin" "$LOG_DIR" "$AGENT_DIR"
 install -m 0755 "$BINARY" "$HOME/bin/manzanasd"

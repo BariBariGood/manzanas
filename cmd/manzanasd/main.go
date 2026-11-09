@@ -269,6 +269,17 @@ func main() {
 	// effects — and never after a misleading "listening" log line.
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
+		// A duplicate service definition (stale LaunchAgent, a second
+		// install path) fails this bind forever while KeepAlive respawns
+		// it — tens of thousands of spawns over days, wedging the host.
+		// If a live manzanasd already owns the port, exit cleanly instead:
+		// KeepAlive only restarts non-zero exits, so the duplicate stays
+		// down. A foreign process holding the port is a real config
+		// error and still exits 1.
+		if errors.Is(err, syscall.EADDRINUSE) && alreadyServing(*addr) {
+			fmt.Fprintf(os.Stderr, "manzanasd is already serving on %s; duplicate instance exiting\n", *addr)
+			return
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
